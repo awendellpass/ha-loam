@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --quiet C:\\Users\\Andy\\Documents\\loam\\.claude\\hooks\\post_tool_lint.py"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --quiet C:\\Users\\Andy\\Documents\\loam\\.claude\\hooks\\stop_gate.py"
+          }
+        ]
+      }
+    ]
+  }
+}
