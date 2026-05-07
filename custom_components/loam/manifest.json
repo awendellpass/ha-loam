@@ -1,0 +1,10 @@
+{
+  "domain": "loam",
+  "name": "Loam",
+  "version": "1.0.0",
+  "documentation": "https://github.com/awendellpass/ha-loam",
+  "requirements": ["requests>=2.31.0"],
+  "dependencies": [],
+  "codeowners": ["@awendellpass"],
+  "iot_class": "local_polling"
+}
