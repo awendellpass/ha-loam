@@ -1,6 +1,20 @@
 (() => {
   "use strict";
 
+  // ── Auth ───────────────────────────────────────────────────────────────────
+  let hassToken = null;
+  let booted = false;
+
+  window.addEventListener("message", e => {
+    if (e.origin !== window.location.origin) return;
+    if (e.data?.type !== "loam-auth") return;
+    hassToken = e.data.token;
+    if (!booted) {
+      booted = true;
+      boot();
+    }
+  });
+
   // ── State ──────────────────────────────────────────────────────────────────
   const state = {
     gardens: [],
@@ -15,8 +29,10 @@
   async function api(method, path, body) {
     const opts = {
       method,
-      headers: { "Content-Type": "application/json" },
-      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json",
+        ...(hassToken ? { "Authorization": `Bearer ${hassToken}` } : {}),
+      },
     };
     if (body !== undefined) opts.body = JSON.stringify(body);
     const res = await fetch(`/api/loam${path}`, opts);
@@ -601,5 +617,4 @@
     }
   }
 
-  boot();
 })();
