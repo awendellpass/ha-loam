@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Loam secrets — real API keys, never commit (template lives in secrets.py.example)
+custom_components/loam/secrets.py
