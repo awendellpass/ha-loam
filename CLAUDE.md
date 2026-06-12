@@ -37,7 +37,10 @@ custom_components/loam/
 - **gardens** — `id, name, type (raised_bed/in_ground/container/grow_bag), width_ft, height_ft, created_at` (multiple gardens supported; each garden is the grid)
 - **plants** — `id, name, openfarm_slug, description, sun_requirements, sowing_method, row_spacing_cm, spread_cm, days_to_maturity_min, days_to_maturity_max, is_custom, created_at`
 - **plantings** — `id, garden_id, plant_id, planted_date, quantity, notes, status (active/harvested/removed), removed_date, created_at` (the dated Plantings-tab log)
-- **placements** — `id, garden_id, grid_col, grid_row, plant_id, note, created_at` — one plant assigned to one 1-ft cell (square-foot layout); `UNIQUE(garden_id, grid_col, grid_row)`, one plant per cell. This is the lightweight grid layer, separate from `plantings`.
+- **placements** — `id, garden_id, grid_col, grid_row, plant_id, planting_id, note, created_at` — one plant per 1-ft cell; `UNIQUE(garden_id, grid_col, grid_row)`. `planting_id` links the cell to its plantings-log entry.
+- **companions** — `plant_a_id, plant_b_id, relationship (good/bad/neutral), created_at`; PK `(plant_a_id, plant_b_id)` stored with `a < b`. Cache of Claude-resolved companion relationships, one row per unordered pair.
+
+> **Grid ↔ log sync:** `apply_placements` keeps `plantings` in step with the grid — setting a cell creates an active planting and stores its id on the placement; clearing/replacing a cell marks that planting `removed`. `update_planting` (and `delete_planting`) clear the linked placement when a planting is harvested/removed, so the Plantings tab and the grid stay consistent both directions.
 
 > There is **no `beds` table** — it was collapsed into `gardens`. `database.py` migrates older DBs: it adds `type/width_ft/height_ft` to `gardens`, rebuilds `plantings` to reference `garden_id`, and drops `beds`. The plant library is preserved.
 
@@ -47,6 +50,7 @@ custom_components/loam/
 GET/POST   /api/loam/garden
 PUT/DELETE /api/loam/garden/{id}
 GET/POST   /api/loam/placements         (GET ?garden_id= ; POST {garden_id, cells:[{grid_col,grid_row,plant_id|null,note}]})
+GET        /api/loam/companions?garden_id=   (returns {"relationships": {"a,b": good|bad|neutral}}; resolves uncached pairs via Claude + caches)
 GET/POST   /api/loam/plants
 GET        /api/loam/plants/search?q=
 DELETE     /api/loam/plants/{id}
@@ -56,7 +60,7 @@ PUT/DELETE /api/loam/plantings/{id}
 
 ## UI — 3 Tabs
 
-- **Garden:** Sidebar lists gardens (name, type badge, W×H ft, planting count) with **+ New** and per-card **Delete**. Selecting a garden renders its to-scale grid (1 square = 1 ft). A toolbar holds a **brush** (pick a plant, or "Erase") plus **Copy from square** (click a planted cell to load its plant as the brush). Click or drag squares to plant/clear; changes batch-save on mouse-up via `/placements`. Creating a garden is a form: name, type, width, height.
+- **Garden:** Sidebar lists gardens (name, type badge, W×H ft, planting count) with **+ New** and per-card **Delete**. Selecting a garden renders its to-scale grid (1 square = 1 ft). A toolbar holds a **brush** (pick a plant, or "Erase") plus **Copy from square** (click a planted cell to load its plant as the brush). Click or drag squares to plant/clear; changes batch-save on mouse-up via `/placements`. **Companion edges:** after placements load, the frontend calls `/companions` and draws a green line on the shared border of adjacent good companions, red for bad (neutral/unknown = no line). Planting a square also creates a dated entry in the Plantings tab (grid ↔ log sync). Creating a garden is a form: name, type, width, height.
 - **Library:** Live plant search via the **Permapeople** API (`POST /api/search`, auth = `x-permapeople-key-id` + `x-permapeople-key-secret` headers), save to local library, add custom plants, browse saved. Credentials come from `configuration.yaml` → `secrets.yaml` (`permapeople_key_id`, `permapeople_key_secret`), read by `CONFIG_SCHEMA` in `__init__.py`. (Replaced OpenFarm, which shut down. Perenual was tried first but the account was actually a Permapeople one.)
 - **Plantings:** Log new planting (garden + plant + date + quantity + notes), view active plantings grouped by garden, mark harvested/removed. (Separate from the grid `placements` layer.)
 
@@ -70,6 +74,7 @@ PUT/DELETE /api/loam/plantings/{id}
 - **No debug logging** in finished code
 - **No inline CSS** — all styles in the `<style>` block in the HTML file (the grid cell size lives in the `--cell` CSS var and the `CELL` JS constant — keep them in sync)
 - **No external JS frameworks or CDN dependencies** — vanilla JS only; the grid is plain DOM/CSS
+- **Companion data comes from Claude, not Permapeople** (Permapeople has no companion fields). Resolved per plant pair via the `anthropic` SDK (`COMPANION_MODEL = claude-opus-4-8`, structured outputs) and cached in the `companions` table — each pair is asked once. Anthropic key via `anthropic_api_key` in configuration.yaml → secrets.yaml. If the key is missing or the call fails, companions degrade to cached-only (no crash, no lines).
 - **Tomorrow.io is stubbed in Phase 1** — do not implement weather logic yet
 
 ## Deployment Workflow

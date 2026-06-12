@@ -8,6 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 
 from .const import (
+    CONF_ANTHROPIC_API_KEY,
     CONF_PERMAPEOPLE_KEY_ID,
     CONF_PERMAPEOPLE_KEY_SECRET,
     DOMAIN,
@@ -15,7 +16,8 @@ from .const import (
 )
 from .database import LoamDatabase
 
-# Optional YAML config: the Permapeople key-id/key-secret come from
+# Optional YAML config: Permapeople key-id/key-secret (plant search) and the
+# Anthropic API key (companion-planting classification) come from
 # /config/secrets.yaml, referenced under `loam:` in configuration.yaml. Keeps
 # credentials out of the repo and the integration folder (HACS overwrites that).
 CONFIG_SCHEMA = vol.Schema(
@@ -24,6 +26,7 @@ CONFIG_SCHEMA = vol.Schema(
             {
                 vol.Optional(CONF_PERMAPEOPLE_KEY_ID): cv.string,
                 vol.Optional(CONF_PERMAPEOPLE_KEY_SECRET): cv.string,
+                vol.Optional(CONF_ANTHROPIC_API_KEY): cv.string,
             }
         )
     },
@@ -45,6 +48,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         "db": db,
         "permapeople_key_id": conf.get(CONF_PERMAPEOPLE_KEY_ID, ""),
         "permapeople_key_secret": conf.get(CONF_PERMAPEOPLE_KEY_SECRET, ""),
+        "anthropic_api_key": conf.get(CONF_ANTHROPIC_API_KEY, ""),
     }
 
     frontend_dir = os.path.join(os.path.dirname(__file__), "frontend")

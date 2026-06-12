@@ -25,6 +25,7 @@
     plantings: [],
     searchResults: [],       // latest plant-search results (saved by index, not via DOM attrs)
     placements: [],          // cell plant assignments for the active garden
+    companions: {},          // {"a,b": "good"|"bad"|"neutral"} for active garden's plants
     brush: "",               // "" (none), "erase", or a plant id (string)
     copyMode: false,         // next click picks up a cell's plant as the brush
     painting: false,         // mouse is down, painting cells
@@ -117,6 +118,56 @@
     return state.placements.find(pc => pc.grid_col === col && pc.grid_row === row);
   }
 
+  // Companion edges: red/green lines on the border between adjacent, differing plants.
+  async function loadCompanions() {
+    const g = activeGarden();
+    if (!g) return;
+    try {
+      const data = await get(`/companions?garden_id=${g.id}`);
+      state.companions = data.relationships || {};
+    } catch (e) {
+      state.companions = {};
+    }
+    renderCompanionEdges();
+  }
+
+  function companionRel(a, b) {
+    const key = a < b ? `${a},${b}` : `${b},${a}`;
+    return state.companions[key];
+  }
+
+  function renderCompanionEdges() {
+    canvas.querySelectorAll(".cell-edge").forEach(e => e.remove());
+    const byCell = {};
+    state.placements.forEach(pc => { byCell[`${pc.grid_col},${pc.grid_row}`] = pc.plant_id; });
+
+    state.placements.forEach(pc => {
+      const c = pc.grid_col, r = pc.grid_row, pid = pc.plant_id;
+      const right = byCell[`${c + 1},${r}`];
+      if (right && right !== pid) addCompanionEdge(companionRel(pid, right), "v", c + 1, r);
+      const down = byCell[`${c},${r + 1}`];
+      if (down && down !== pid) addCompanionEdge(companionRel(pid, down), "h", c, r + 1);
+    });
+  }
+
+  function addCompanionEdge(relationship, orient, col, row) {
+    if (relationship !== "good" && relationship !== "bad") return;
+    const div = document.createElement("div");
+    div.className = `cell-edge ${relationship}`;
+    if (orient === "v") {
+      div.style.left = (col * CELL - 1.5) + "px";
+      div.style.top = (row * CELL) + "px";
+      div.style.width = "3px";
+      div.style.height = CELL + "px";
+    } else {
+      div.style.left = (col * CELL) + "px";
+      div.style.top = (row * CELL - 1.5) + "px";
+      div.style.width = CELL + "px";
+      div.style.height = "3px";
+    }
+    canvas.appendChild(div);
+  }
+
   function cellFromEvent(e) {
     const g = activeGarden();
     const r = canvas.getBoundingClientRect();
@@ -171,6 +222,7 @@
     try {
       state.placements = await post("/placements", { garden_id: state.activeGardenId, cells });
       renderCells();
+      loadCompanions();
     } catch (e) {
       alert("Error: " + e.message);
       await loadGardenBoard();
@@ -278,6 +330,7 @@
     state.plants = plants;
     populateBrushSelect();
     renderCells();
+    loadCompanions();
   }
 
   // ── Gardens ──────────────────────────────────────────────────────────────────

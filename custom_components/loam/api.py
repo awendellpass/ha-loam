@@ -1,9 +1,31 @@
-"""Permapeople plant database client for Loam."""
+"""Permapeople plant database client + Claude companion classifier for Loam."""
 from __future__ import annotations
+
+import json
 
 import requests
 
-from .const import PERMAPEOPLE_API_URL
+from .const import COMPANION_MODEL, PERMAPEOPLE_API_URL
+
+_COMPANION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "results": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "index": {"type": "integer"},
+                    "relationship": {"type": "string", "enum": ["good", "bad", "neutral"]},
+                },
+                "required": ["index", "relationship"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["results"],
+    "additionalProperties": False,
+}
 
 
 def _data_value(data: list, key: str) -> str:
@@ -65,5 +87,55 @@ def search_permapeople(query: str, key_id: str, key_secret: str) -> list[dict]:
             "days_to_maturity_min": None,
             "days_to_maturity_max": None,
             "image_url": "",
+        })
+    return results
+
+
+def classify_companions(pairs: list[dict], api_key: str) -> list[dict]:
+    """Classify plant pairs as good/bad/neutral companions via Claude.
+
+    `pairs`: list of {"a", "b", "a_name", "b_name"}. Returns
+    [{"a", "b", "relationship"}]. Raises on API/network errors so the caller
+    can degrade gracefully (show no companion lines rather than crashing).
+    """
+    if not pairs or not api_key:
+        return []
+
+    import anthropic
+
+    lines = "\n".join(
+        f"{i}: {p['a_name']} & {p['b_name']}" for i, p in enumerate(pairs)
+    )
+    prompt = (
+        "Classify each pair of plants for companion planting as:\n"
+        "- \"good\": they benefit each other when grown adjacent\n"
+        "- \"bad\": they harm each other and should not be adjacent\n"
+        "- \"neutral\": no significant beneficial or harmful interaction\n\n"
+        f"Pairs:\n{lines}\n\n"
+        "Return one result per pair, by index."
+    )
+
+    client = anthropic.Anthropic(api_key=api_key)
+    resp = client.messages.create(
+        model=COMPANION_MODEL,
+        max_tokens=4000,
+        system="You are an expert in vegetable and herb companion planting.",
+        messages=[{"role": "user", "content": prompt}],
+        # Passed via extra_body so it reaches the API regardless of SDK version.
+        extra_body={"output_config": {"format": {"type": "json_schema", "schema": _COMPANION_SCHEMA}}},
+    )
+
+    text = next((b.text for b in resp.content if b.type == "text"), "")
+    parsed = json.loads(text)
+
+    results = []
+    for item in parsed.get("results", []):
+        idx = item.get("index")
+        if not isinstance(idx, int) or idx < 0 or idx >= len(pairs):
+            continue
+        results.append({
+            "a": pairs[idx]["a"],
+            "b": pairs[idx]["b"],
+            "relationship": item.get("relationship", "neutral"),
         })
     return results

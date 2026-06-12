@@ -183,6 +183,18 @@
       word-break: break-word;
     }
 
+    /* Companion-planting edges between adjacent differing plants */
+    .cell-edge {
+      position: absolute;
+      border-radius: 2px;
+      pointer-events: none;
+      z-index: 4;
+      box-shadow: 0 0 3px rgba(0, 0, 0, 0.5);
+    }
+
+    .cell-edge.good { background: #43a047; }
+    .cell-edge.bad  { background: #e53935; }
+
     .garden-sidebar {
       width: 300px;
       background: var(--surface);

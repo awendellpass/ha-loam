@@ -1,6 +1,7 @@
 """HTTP API views for Loam."""
 from __future__ import annotations
 
+import itertools
 import json
 from typing import Any
 
@@ -42,6 +43,7 @@ def async_setup_views(hass: HomeAssistant) -> None:
     hass.http.register_view(LoamGardenView)
     hass.http.register_view(LoamGardenDetailView)
     hass.http.register_view(LoamPlacementsView)
+    hass.http.register_view(LoamCompanionsView)
     hass.http.register_view(LoamPlantsView)
     hass.http.register_view(LoamPlantSearchView)
     hass.http.register_view(LoamPlantDetailView)
@@ -213,6 +215,59 @@ class LoamPlacementsView(HomeAssistantView):
             db.apply_placements, int(garden_id), clean
         )
         return _json(placements)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/loam/companions?garden_id=  — good/bad/neutral for the garden's plant
+#   pairs. Cached relationships are returned immediately; uncached pairs are
+#   resolved via Claude, cached, then included. Returns {"relationships": {...}}
+#   keyed "a,b" (a < b). Degrades to cached-only if Claude isn't configured/fails.
+# ---------------------------------------------------------------------------
+
+class LoamCompanionsView(HomeAssistantView):
+    url = "/api/loam/companions"
+    name = "api:loam:companions"
+    requires_auth = True
+
+    async def get(self, request: web.Request) -> web.Response:
+        garden_id = request.rel_url.query.get("garden_id")
+        if not garden_id or not garden_id.isdigit():
+            return _error("garden_id is required")
+        gid = int(garden_id)
+
+        hass = request.app["hass"]
+        db = _db(request)
+
+        placements = await hass.async_add_executor_job(db.get_placements, gid)
+        names = {p["plant_id"]: p["plant_name"] for p in placements}
+        plant_ids = sorted(names)
+        if len(plant_ids) < 2:
+            return _json({"relationships": {}})
+
+        cached = await hass.async_add_executor_job(db.get_companions, plant_ids)
+
+        missing = [
+            {"a": a, "b": b, "a_name": names[a], "b_name": names[b]}
+            for a, b in itertools.combinations(plant_ids, 2)
+            if f"{a},{b}" not in cached
+        ]
+
+        api_key = hass.data[DOMAIN].get("anthropic_api_key", "")
+        if missing and api_key:
+            from .api import classify_companions
+            try:
+                resolved = await hass.async_add_executor_job(
+                    classify_companions, missing, api_key
+                )
+            except Exception:
+                resolved = []  # degrade: show only cached relationships
+            if resolved:
+                await hass.async_add_executor_job(db.save_companions, resolved)
+                for r in resolved:
+                    a, b = (r["a"], r["b"]) if r["a"] < r["b"] else (r["b"], r["a"])
+                    cached[f"{a},{b}"] = r["relationship"]
+
+        return _json({"relationships": cached})
 
 
 # ---------------------------------------------------------------------------

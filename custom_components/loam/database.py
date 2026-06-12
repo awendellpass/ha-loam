@@ -57,6 +57,8 @@ PLANTINGS_SCHEMA = """
 
 # A placement is one plant assigned to one 1-ft cell of a garden (square-foot
 # layout). At most one plant per cell, enforced by the UNIQUE constraint.
+# planting_id links the cell to its dated plantings-log entry so the grid and
+# the Plantings tab stay in sync.
 PLACEMENTS_SCHEMA = """
     CREATE TABLE IF NOT EXISTS placements (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -64,11 +66,27 @@ PLACEMENTS_SCHEMA = """
         grid_col INTEGER NOT NULL,
         grid_row INTEGER NOT NULL,
         plant_id INTEGER NOT NULL,
+        planting_id INTEGER,
         note TEXT,
         created_at TEXT NOT NULL,
         UNIQUE(garden_id, grid_col, grid_row),
         FOREIGN KEY(garden_id) REFERENCES gardens(id) ON DELETE CASCADE,
         FOREIGN KEY(plant_id) REFERENCES plants(id) ON DELETE CASCADE
+    );
+"""
+
+# Cached companion-planting relationships between two plants, resolved once via
+# Claude and reused. Stored with plant_a_id < plant_b_id so each unordered pair
+# has a single row. relationship is 'good', 'bad', or 'neutral'.
+COMPANIONS_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS companions (
+        plant_a_id INTEGER NOT NULL,
+        plant_b_id INTEGER NOT NULL,
+        relationship TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (plant_a_id, plant_b_id),
+        FOREIGN KEY(plant_a_id) REFERENCES plants(id) ON DELETE CASCADE,
+        FOREIGN KEY(plant_b_id) REFERENCES plants(id) ON DELETE CASCADE
     );
 """
 
@@ -91,7 +109,10 @@ class LoamDatabase:
 
     def initialize(self) -> None:
         with self._connect() as conn:
-            conn.executescript(GARDENS_SCHEMA + PLANTS_SCHEMA + PLANTINGS_SCHEMA + PLACEMENTS_SCHEMA)
+            conn.executescript(
+                GARDENS_SCHEMA + PLANTS_SCHEMA + PLANTINGS_SCHEMA
+                + PLACEMENTS_SCHEMA + COMPANIONS_SCHEMA
+            )
             self._migrate(conn)
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
@@ -108,6 +129,9 @@ class LoamDatabase:
             conn.execute("DROP TABLE plantings")
             conn.executescript(PLANTINGS_SCHEMA)
         conn.execute("DROP TABLE IF EXISTS beds")
+
+        # Link placements to their plantings-log entry (added with grid↔log sync).
+        self._add_column(conn, "placements", "planting_id", "INTEGER")
 
     @staticmethod
     def _add_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:
@@ -192,26 +216,101 @@ class LoamDatabase:
             return [dict(r) for r in rows]
 
     def apply_placements(self, garden_id: int, cells: list[dict]) -> list[dict]:
-        """Set or clear cells in one pass. A cell with plant_id None is cleared."""
+        """Set or clear cells in one pass. A cell with plant_id None is cleared.
+
+        Keeps the plantings log in sync: setting a cell creates an active
+        planting; clearing or replacing one marks the old planting removed.
+        """
+        today = _utcnow()[:10]
         with self._connect() as conn:
             for cell in cells:
                 col = int(cell["grid_col"])
                 row = int(cell["grid_row"])
                 plant_id = cell.get("plant_id")
+                existing = conn.execute(
+                    "SELECT id, plant_id, planting_id FROM placements "
+                    "WHERE garden_id = ? AND grid_col = ? AND grid_row = ?",
+                    (garden_id, col, row),
+                ).fetchone()
+
                 if plant_id is None:
-                    conn.execute(
-                        "DELETE FROM placements WHERE garden_id = ? AND grid_col = ? AND grid_row = ?",
-                        (garden_id, col, row),
-                    )
-                else:
-                    conn.execute(
-                        """INSERT INTO placements (garden_id, grid_col, grid_row, plant_id, note, created_at)
-                           VALUES (?, ?, ?, ?, ?, ?)
-                           ON CONFLICT(garden_id, grid_col, grid_row)
-                           DO UPDATE SET plant_id = excluded.plant_id, note = excluded.note""",
-                        (garden_id, col, row, int(plant_id), cell.get("note"), _utcnow()),
-                    )
+                    if existing:
+                        self._retire_planting(conn, existing["planting_id"], today)
+                        conn.execute("DELETE FROM placements WHERE id = ?", (existing["id"],))
+                    continue
+
+                plant_id = int(plant_id)
+                if existing and existing["plant_id"] == plant_id:
+                    continue  # no change — keep its planting
+
+                if existing:
+                    self._retire_planting(conn, existing["planting_id"], today)
+                planting_id = self._insert_planting(conn, garden_id, plant_id, today)
+                conn.execute(
+                    """INSERT INTO placements
+                       (garden_id, grid_col, grid_row, plant_id, planting_id, note, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(garden_id, grid_col, grid_row)
+                       DO UPDATE SET plant_id = excluded.plant_id,
+                                     planting_id = excluded.planting_id,
+                                     note = excluded.note""",
+                    (garden_id, col, row, plant_id, planting_id, cell.get("note"), _utcnow()),
+                )
         return self.get_placements(garden_id)
+
+    @staticmethod
+    def _insert_planting(conn: sqlite3.Connection, garden_id: int, plant_id: int, today: str) -> int:
+        cur = conn.execute(
+            """INSERT INTO plantings (garden_id, plant_id, planted_date, status, created_at)
+               VALUES (?, ?, ?, 'active', ?)""",
+            (garden_id, plant_id, today, _utcnow()),
+        )
+        return cur.lastrowid
+
+    @staticmethod
+    def _retire_planting(conn: sqlite3.Connection, planting_id: int | None, today: str) -> None:
+        if planting_id is None:
+            return
+        conn.execute(
+            "UPDATE plantings SET status = 'removed', removed_date = ? "
+            "WHERE id = ? AND status = 'active'",
+            (today, planting_id),
+        )
+
+    # ------------------------------------------------------------------
+    # Companions (cached good/bad/neutral relationships between two plants)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _pair(a: int, b: int) -> tuple[int, int]:
+        return (a, b) if a < b else (b, a)
+
+    def get_companions(self, plant_ids: list[int]) -> dict[str, str]:
+        """Return cached relationships for all pairs among plant_ids, keyed 'a,b' (a<b)."""
+        ids = sorted(set(plant_ids))
+        if len(ids) < 2:
+            return {}
+        placeholders = ",".join("?" * len(ids))
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""SELECT plant_a_id, plant_b_id, relationship FROM companions
+                    WHERE plant_a_id IN ({placeholders}) AND plant_b_id IN ({placeholders})""",
+                ids + ids,
+            ).fetchall()
+        return {f"{r['plant_a_id']},{r['plant_b_id']}": r["relationship"] for r in rows}
+
+    def save_companions(self, pairs: list[dict]) -> None:
+        """Persist resolved relationships. Each pair: {a, b, relationship}."""
+        with self._connect() as conn:
+            for p in pairs:
+                a, b = self._pair(int(p["a"]), int(p["b"]))
+                conn.execute(
+                    """INSERT INTO companions (plant_a_id, plant_b_id, relationship, created_at)
+                       VALUES (?, ?, ?, ?)
+                       ON CONFLICT(plant_a_id, plant_b_id)
+                       DO UPDATE SET relationship = excluded.relationship""",
+                    (a, b, p["relationship"], _utcnow()),
+                )
 
     # ------------------------------------------------------------------
     # Plants
@@ -328,9 +427,13 @@ class LoamDatabase:
                 return self.get_planting(planting_id)
             params.append(planting_id)
             conn.execute(f"UPDATE plantings SET {', '.join(updates)} WHERE id = ?", params)
+            # Harvesting/removing in the log clears the matching grid cell.
+            if status in ("harvested", "removed"):
+                conn.execute("DELETE FROM placements WHERE planting_id = ?", (planting_id,))
         return self.get_planting(planting_id)
 
     def delete_planting(self, planting_id: int) -> bool:
         with self._connect() as conn:
+            conn.execute("DELETE FROM placements WHERE planting_id = ?", (planting_id,))
             cur = conn.execute("DELETE FROM plantings WHERE id = ?", (planting_id,))
             return cur.rowcount > 0

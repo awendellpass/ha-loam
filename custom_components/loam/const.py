@@ -13,6 +13,10 @@ PERMAPEOPLE_API_URL = "https://permapeople.org/api/search"
 # configuration.yaml keys read by CONFIG_SCHEMA in __init__.py.
 CONF_PERMAPEOPLE_KEY_ID = "permapeople_key_id"
 CONF_PERMAPEOPLE_KEY_SECRET = "permapeople_key_secret"
+CONF_ANTHROPIC_API_KEY = "anthropic_api_key"
+
+# Claude model used to classify companion-planting relationships (cached per pair).
+COMPANION_MODEL = "claude-opus-4-8"
 
 # Secrets load from an untracked secrets.py (gitignored — see secrets.py.example).
 # Real API keys never enter version control. Falls back to "" if the file is
