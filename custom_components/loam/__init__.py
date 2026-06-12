@@ -3,20 +3,40 @@ from __future__ import annotations
 
 import os
 
+import voluptuous as vol
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_validation as cv
 
-from .const import DOMAIN, FRONTEND_PATH
+from .const import CONF_PERENUAL_API_KEY, DOMAIN, FRONTEND_PATH
 from .database import LoamDatabase
+
+# Optional YAML config: the Perenual API key comes from /config/secrets.yaml,
+# referenced under `loam:` in configuration.yaml. Keeps the key out of the repo
+# and out of the integration folder (which HACS overwrites on update).
+CONFIG_SCHEMA = vol.Schema(
+    {
+        DOMAIN: vol.Schema(
+            {
+                vol.Optional(CONF_PERENUAL_API_KEY): cv.string,
+            }
+        )
+    },
+    extra=vol.ALLOW_EXTRA,
+)
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Loam integration."""
 
+    # `config.get(DOMAIN)` is None when the YAML has a bare `loam:` line.
+    conf = config.get(DOMAIN) or {}
+    perenual_api_key = conf.get(CONF_PERENUAL_API_KEY, "")
+
     db_path = hass.config.path("loam.db")
     db = LoamDatabase(db_path)
     await hass.async_add_executor_job(db.initialize)
 
-    hass.data[DOMAIN] = {"db": db}
+    hass.data[DOMAIN] = {"db": db, "perenual_api_key": perenual_api_key}
 
     frontend_dir = os.path.join(os.path.dirname(__file__), "frontend")
     try:

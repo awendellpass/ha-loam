@@ -55,6 +55,23 @@ PLANTINGS_SCHEMA = """
     );
 """
 
+# A placement is one plant assigned to one 1-ft cell of a garden (square-foot
+# layout). At most one plant per cell, enforced by the UNIQUE constraint.
+PLACEMENTS_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS placements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        garden_id INTEGER NOT NULL,
+        grid_col INTEGER NOT NULL,
+        grid_row INTEGER NOT NULL,
+        plant_id INTEGER NOT NULL,
+        note TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE(garden_id, grid_col, grid_row),
+        FOREIGN KEY(garden_id) REFERENCES gardens(id) ON DELETE CASCADE,
+        FOREIGN KEY(plant_id) REFERENCES plants(id) ON DELETE CASCADE
+    );
+"""
+
 
 class LoamDatabase:
     """Manages all Loam data in a local SQLite database."""
@@ -74,7 +91,7 @@ class LoamDatabase:
 
     def initialize(self) -> None:
         with self._connect() as conn:
-            conn.executescript(GARDENS_SCHEMA + PLANTS_SCHEMA + PLANTINGS_SCHEMA)
+            conn.executescript(GARDENS_SCHEMA + PLANTS_SCHEMA + PLANTINGS_SCHEMA + PLACEMENTS_SCHEMA)
             self._migrate(conn)
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
@@ -157,6 +174,44 @@ class LoamDatabase:
         with self._connect() as conn:
             cur = conn.execute("DELETE FROM gardens WHERE id = ?", (garden_id,))
             return cur.rowcount > 0
+
+    # ------------------------------------------------------------------
+    # Placements (a plant assigned to one garden cell)
+    # ------------------------------------------------------------------
+
+    def get_placements(self, garden_id: int) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT pc.*, p.name AS plant_name
+                   FROM placements pc
+                   JOIN plants p ON p.id = pc.plant_id
+                   WHERE pc.garden_id = ?
+                   ORDER BY pc.grid_row, pc.grid_col""",
+                (garden_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def apply_placements(self, garden_id: int, cells: list[dict]) -> list[dict]:
+        """Set or clear cells in one pass. A cell with plant_id None is cleared."""
+        with self._connect() as conn:
+            for cell in cells:
+                col = int(cell["grid_col"])
+                row = int(cell["grid_row"])
+                plant_id = cell.get("plant_id")
+                if plant_id is None:
+                    conn.execute(
+                        "DELETE FROM placements WHERE garden_id = ? AND grid_col = ? AND grid_row = ?",
+                        (garden_id, col, row),
+                    )
+                else:
+                    conn.execute(
+                        """INSERT INTO placements (garden_id, grid_col, grid_row, plant_id, note, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?)
+                           ON CONFLICT(garden_id, grid_col, grid_row)
+                           DO UPDATE SET plant_id = excluded.plant_id, note = excluded.note""",
+                        (garden_id, col, row, int(plant_id), cell.get("note"), _utcnow()),
+                    )
+        return self.get_placements(garden_id)
 
     # ------------------------------------------------------------------
     # Plants

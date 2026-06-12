@@ -41,6 +41,7 @@ def _as_dim(value: Any, label: str) -> tuple[int | None, str | None]:
 def async_setup_views(hass: HomeAssistant) -> None:
     hass.http.register_view(LoamGardenView)
     hass.http.register_view(LoamGardenDetailView)
+    hass.http.register_view(LoamPlacementsView)
     hass.http.register_view(LoamPlantsView)
     hass.http.register_view(LoamPlantSearchView)
     hass.http.register_view(LoamPlantDetailView)
@@ -157,6 +158,64 @@ class LoamGardenDetailView(HomeAssistantView):
 
 
 # ---------------------------------------------------------------------------
+# GET  /api/loam/placements?garden_id=   — list cell placements for a garden
+# POST /api/loam/placements              — set/clear cells (plant_id null clears)
+# ---------------------------------------------------------------------------
+
+class LoamPlacementsView(HomeAssistantView):
+    url = "/api/loam/placements"
+    name = "api:loam:placements"
+    requires_auth = True
+
+    async def get(self, request: web.Request) -> web.Response:
+        garden_id = request.rel_url.query.get("garden_id")
+        if not garden_id or not garden_id.isdigit():
+            return _error("garden_id is required")
+        db = _db(request)
+        placements = await request.app["hass"].async_add_executor_job(
+            db.get_placements, int(garden_id)
+        )
+        return _json(placements)
+
+    async def post(self, request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+        except Exception:
+            return _error("Invalid JSON")
+
+        garden_id = body.get("garden_id")
+        cells = body.get("cells")
+        if not garden_id:
+            return _error("garden_id is required")
+        if not isinstance(cells, list) or not cells:
+            return _error("cells must be a non-empty list")
+
+        clean: list[dict] = []
+        for cell in cells:
+            try:
+                col = int(cell["grid_col"])
+                row = int(cell["grid_row"])
+            except (KeyError, TypeError, ValueError):
+                return _error("each cell needs grid_col and grid_row")
+            if col < 0 or row < 0 or col >= MAX_GARDEN_FT or row >= MAX_GARDEN_FT:
+                return _error("cell is outside the garden bounds")
+            plant_id = cell.get("plant_id")
+            if plant_id is not None:
+                try:
+                    plant_id = int(plant_id)
+                except (TypeError, ValueError):
+                    return _error("plant_id must be a number or null")
+            clean.append({"grid_col": col, "grid_row": row, "plant_id": plant_id,
+                          "note": cell.get("note")})
+
+        db = _db(request)
+        placements = await request.app["hass"].async_add_executor_job(
+            db.apply_placements, int(garden_id), clean
+        )
+        return _json(placements)
+
+
+# ---------------------------------------------------------------------------
 # GET  /api/loam/plants        — list saved plants
 # POST /api/loam/plants        — save a plant to library
 # ---------------------------------------------------------------------------
@@ -181,7 +240,7 @@ class LoamPlantsView(HomeAssistantView):
         if not name:
             return _error("name is required")
 
-        # Prevent duplicate OpenFarm saves
+        # Prevent duplicate saves of the same external plant (e.g. "perenual:123")
         slug = body.get("openfarm_slug", "").strip()
         if slug:
             db = _db(request)
@@ -210,8 +269,15 @@ class LoamPlantSearchView(HomeAssistantView):
         if not query:
             return _json([])
 
-        from .api import search_openfarm
-        results = await request.app["hass"].async_add_executor_job(search_openfarm, query)
+        api_key = request.app["hass"].data[DOMAIN].get("perenual_api_key", "")
+        if not api_key:
+            return _error(
+                "Plant search isn't configured. Add a Perenual API key to configuration.yaml.",
+                503,
+            )
+
+        from .api import search_perenual
+        results = await request.app["hass"].async_add_executor_job(search_perenual, query, api_key)
         return _json(results)
 
 

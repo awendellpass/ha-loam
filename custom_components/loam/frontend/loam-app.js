@@ -16,13 +16,18 @@
   });
 
   // ── State ──────────────────────────────────────────────────────────────────
-  const CELL = 26; // pixels per foot — keep in sync with --cell in loam-panel.html
+  const CELL = 44; // pixels per foot — keep in sync with --cell in loam-panel.html
 
   const state = {
     gardens: [],
     activeGardenId: null,
     plants: [],
     plantings: [],
+    placements: [],          // cell plant assignments for the active garden
+    brush: "",               // "" (none), "erase", or a plant id (string)
+    copyMode: false,         // next click picks up a cell's plant as the brush
+    painting: false,         // mouse is down, painting cells
+    paintChanges: new Map(), // pending cell changes for the current drag
   };
 
   const activeGarden = () => state.gardens.find(g => g.id === state.activeGardenId);
@@ -63,7 +68,7 @@
 
       if (tab.dataset.tab === "library") renderLibrary();
       if (tab.dataset.tab === "plantings") renderPlantings();
-      if (tab.dataset.tab === "garden") renderGrid();
+      if (tab.dataset.tab === "garden") loadGardenBoard();
     });
   });
 
@@ -71,22 +76,207 @@
   const canvas = document.getElementById("grid-canvas");
   const gridEmpty = document.getElementById("grid-empty");
 
+  const toolbar = document.getElementById("grid-toolbar");
+
   function renderGrid() {
     const g = activeGarden();
     if (!g) {
       canvas.style.display = "none";
       gridEmpty.style.display = "flex";
+      toolbar.style.display = "none";
       return;
     }
     gridEmpty.style.display = "none";
     canvas.style.display = "block";
+    toolbar.style.display = "flex";
     const w = g.width_ft || 1;
     const h = g.height_ft || 1;
     canvas.style.width = (w * CELL) + "px";
     canvas.style.height = (h * CELL) + "px";
-    // Grid lines are drawn via the CSS background. Per-cell plant placement
-    // will render here in a future iteration.
+    renderCells();
+  }
+
+  // ── Cell placements (plant per square) ──────────────────────────────────────
+  function renderCells() {
     canvas.innerHTML = "";
+    state.placements.forEach(pc => {
+      const div = document.createElement("div");
+      div.className = "cell-chip";
+      div.style.left = (pc.grid_col * CELL + 1) + "px";
+      div.style.top = (pc.grid_row * CELL + 1) + "px";
+      div.style.width = (CELL - 2) + "px";
+      div.style.height = (CELL - 2) + "px";
+      div.title = pc.plant_name;
+      div.innerHTML = `<span class="cell-chip-label">${escapeHtml(pc.plant_name)}</span>`;
+      canvas.appendChild(div);
+    });
+  }
+
+  function placementAt(col, row) {
+    return state.placements.find(pc => pc.grid_col === col && pc.grid_row === row);
+  }
+
+  function cellFromEvent(e) {
+    const g = activeGarden();
+    const r = canvas.getBoundingClientRect();
+    let col = Math.floor((e.clientX - r.left) / CELL);
+    let row = Math.floor((e.clientY - r.top) / CELL);
+    col = Math.max(0, Math.min(col, g.width_ft - 1));
+    row = Math.max(0, Math.min(row, g.height_ft - 1));
+    return { col, row };
+  }
+
+  function setLocalPlacement(col, row, plantId, plantName) {
+    const existing = placementAt(col, row);
+    if (existing) {
+      existing.plant_id = plantId;
+      existing.plant_name = plantName;
+    } else {
+      state.placements.push({
+        garden_id: state.activeGardenId,
+        grid_col: col, grid_row: row,
+        plant_id: plantId, plant_name: plantName,
+      });
+    }
+  }
+
+  function removeLocalPlacement(col, row) {
+    state.placements = state.placements.filter(
+      pc => !(pc.grid_col === col && pc.grid_row === row));
+  }
+
+  function applyBrushToCell(col, row) {
+    const key = col + "," + row;
+    if (state.brush === "erase") {
+      if (!placementAt(col, row)) return;
+      removeLocalPlacement(col, row);
+      state.paintChanges.set(key, { grid_col: col, grid_row: row, plant_id: null });
+    } else {
+      const plantId = parseInt(state.brush, 10);
+      if (!plantId) return;
+      const existing = placementAt(col, row);
+      if (existing && existing.plant_id === plantId) return;
+      const plant = state.plants.find(p => p.id === plantId);
+      setLocalPlacement(col, row, plantId, plant ? plant.name : "");
+      state.paintChanges.set(key, { grid_col: col, grid_row: row, plant_id: plantId });
+    }
+    renderCells();
+  }
+
+  async function commitPaint() {
+    if (!state.paintChanges.size) return;
+    const cells = [...state.paintChanges.values()];
+    state.paintChanges = new Map();
+    try {
+      state.placements = await post("/placements", { garden_id: state.activeGardenId, cells });
+      renderCells();
+    } catch (e) {
+      alert("Error: " + e.message);
+      await loadGardenBoard();
+    }
+  }
+
+  canvas.addEventListener("mousedown", e => {
+    const g = activeGarden();
+    if (!g) return;
+    const { col, row } = cellFromEvent(e);
+    if (state.copyMode) {
+      const pc = placementAt(col, row);
+      if (pc) setBrush(String(pc.plant_id));
+      state.copyMode = false;
+      updateBrushHint();
+      updateCanvasMode();
+      return;
+    }
+    if (state.brush === "") return;
+    e.preventDefault();
+    state.painting = true;
+    state.paintChanges = new Map();
+    applyBrushToCell(col, row);
+  });
+
+  canvas.addEventListener("mousemove", e => {
+    if (!state.painting) return;
+    const { col, row } = cellFromEvent(e);
+    applyBrushToCell(col, row);
+  });
+
+  window.addEventListener("mouseup", () => {
+    if (!state.painting) return;
+    state.painting = false;
+    commitPaint();
+  });
+
+  // ── Brush toolbar ────────────────────────────────────────────────────────────
+  function populateBrushSelect() {
+    const sel = document.getElementById("brush-select");
+    const cur = state.brush;
+    const opts = state.plants.map(p =>
+      `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join("");
+    sel.innerHTML = '<option value="">— none —</option>' +
+      (state.plants.length ? '<option value="erase">Erase</option>' : "") + opts;
+    const valid = cur === "erase" || (cur && state.plants.find(p => String(p.id) === cur));
+    sel.value = valid ? cur : "";
+    state.brush = sel.value;
+    updateBrushHint();
+    updateCanvasMode();
+  }
+
+  function setBrush(value) {
+    state.brush = value;
+    const sel = document.getElementById("brush-select");
+    if (sel) sel.value = value;
+    updateBrushHint();
+    updateCanvasMode();
+  }
+
+  function updateBrushHint() {
+    const hint = document.getElementById("brush-hint");
+    if (!state.plants.length) {
+      hint.textContent = "No plants yet — add some in the Library tab first.";
+    } else if (state.copyMode) {
+      hint.textContent = "Copy mode: click a planted square to pick up its plant.";
+    } else if (state.brush === "") {
+      hint.textContent = "Pick a plant above, then click or drag squares.";
+    } else if (state.brush === "erase") {
+      hint.textContent = "Click or drag squares to clear them.";
+    } else {
+      hint.textContent = "Click or drag squares to plant. Choose “Erase” to clear.";
+    }
+  }
+
+  function updateCanvasMode() {
+    canvas.classList.toggle("copy", state.copyMode);
+    canvas.classList.toggle("planting", !state.copyMode && state.brush !== "");
+  }
+
+  document.getElementById("brush-select").addEventListener("change", e => {
+    state.brush = e.target.value;
+    state.copyMode = false;
+    updateBrushHint();
+    updateCanvasMode();
+  });
+
+  document.getElementById("btn-copy-cell").addEventListener("click", () => {
+    if (!state.plants.length) return;
+    state.copyMode = !state.copyMode;
+    updateBrushHint();
+    updateCanvasMode();
+  });
+
+  async function loadGardenBoard() {
+    state.placements = [];
+    renderGrid();
+    const g = activeGarden();
+    if (!g) return;
+    const [placements, plants] = await Promise.all([
+      get(`/placements?garden_id=${g.id}`),
+      get("/plants"),
+    ]);
+    state.placements = placements;
+    state.plants = plants;
+    populateBrushSelect();
+    renderCells();
   }
 
   // ── Gardens ──────────────────────────────────────────────────────────────────
@@ -146,7 +336,7 @@
   function selectGarden(id) {
     state.activeGardenId = id;
     renderGardensList();
-    renderGrid();
+    loadGardenBoard();
   }
 
   document.getElementById("btn-new-garden").addEventListener("click", showGardenForm);
@@ -206,7 +396,7 @@
       const g = await post("/garden", { name, type, width_ft: w, height_ft: h });
       state.activeGardenId = g.id;
       await loadGardens();
-      renderGrid();
+      await loadGardenBoard();
     } catch (e) {
       alert("Error: " + e.message);
     }
@@ -490,8 +680,10 @@
     if (state.gardens.length === 1) {
       state.activeGardenId = state.gardens[0].id;
       renderGardensList();
+      await loadGardenBoard();
+    } else {
+      renderGrid();
     }
-    renderGrid();
   }
 
 })();

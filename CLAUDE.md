@@ -36,7 +36,8 @@ custom_components/loam/
 
 - **gardens** — `id, name, type (raised_bed/in_ground/container/grow_bag), width_ft, height_ft, created_at` (multiple gardens supported; each garden is the grid)
 - **plants** — `id, name, openfarm_slug, description, sun_requirements, sowing_method, row_spacing_cm, spread_cm, days_to_maturity_min, days_to_maturity_max, is_custom, created_at`
-- **plantings** — `id, garden_id, plant_id, planted_date, quantity, notes, status (active/harvested/removed), removed_date, created_at`
+- **plantings** — `id, garden_id, plant_id, planted_date, quantity, notes, status (active/harvested/removed), removed_date, created_at` (the dated Plantings-tab log)
+- **placements** — `id, garden_id, grid_col, grid_row, plant_id, note, created_at` — one plant assigned to one 1-ft cell (square-foot layout); `UNIQUE(garden_id, grid_col, grid_row)`, one plant per cell. This is the lightweight grid layer, separate from `plantings`.
 
 > There is **no `beds` table** — it was collapsed into `gardens`. `database.py` migrates older DBs: it adds `type/width_ft/height_ft` to `gardens`, rebuilds `plantings` to reference `garden_id`, and drops `beds`. The plant library is preserved.
 
@@ -45,6 +46,7 @@ custom_components/loam/
 ```
 GET/POST   /api/loam/garden
 PUT/DELETE /api/loam/garden/{id}
+GET/POST   /api/loam/placements         (GET ?garden_id= ; POST {garden_id, cells:[{grid_col,grid_row,plant_id|null,note}]})
 GET/POST   /api/loam/plants
 GET        /api/loam/plants/search?q=
 DELETE     /api/loam/plants/{id}
@@ -54,9 +56,9 @@ PUT/DELETE /api/loam/plantings/{id}
 
 ## UI — 3 Tabs
 
-- **Garden:** Sidebar lists gardens (name, type badge, W×H ft, planting count) with **+ New** and per-card **Delete**. Selecting a garden renders its to-scale grid (1 square = 1 ft) in the main area. Creating a garden is a form: name, type, width, height.
-- **Library:** Live OpenFarm search, save to local library, add custom plants, browse saved plants
-- **Plantings:** Log new planting (garden + plant + date + quantity + notes), view active plantings grouped by garden, mark harvested/removed
+- **Garden:** Sidebar lists gardens (name, type badge, W×H ft, planting count) with **+ New** and per-card **Delete**. Selecting a garden renders its to-scale grid (1 square = 1 ft). A toolbar holds a **brush** (pick a plant, or "Erase") plus **Copy from square** (click a planted cell to load its plant as the brush). Click or drag squares to plant/clear; changes batch-save on mouse-up via `/placements`. Creating a garden is a form: name, type, width, height.
+- **Library:** Add custom plants and browse the saved library. **OpenFarm shut down**, so its live search is dead — a replacement plant database is pending (the user chose to wire up a new one; needs a free API key). Custom entries are the interim way to populate the library.
+- **Plantings:** Log new planting (garden + plant + date + quantity + notes), view active plantings grouped by garden, mark harvested/removed. (Separate from the grid `placements` layer.)
 
 ## Hard Constraints
 
