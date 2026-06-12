@@ -279,9 +279,12 @@ class LoamPlantSearchView(HomeAssistantView):
             )
 
         from .api import search_permapeople
-        results = await request.app["hass"].async_add_executor_job(
-            search_permapeople, query, key_id, key_secret
-        )
+        try:
+            results = await request.app["hass"].async_add_executor_job(
+                search_permapeople, query, key_id, key_secret
+            )
+        except Exception as err:  # surface the real reason instead of empty results
+            return _error(f"Plant search failed: {err}", 502)
         return _json(results)
 
 

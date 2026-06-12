@@ -17,27 +17,27 @@ def _data_value(data: list, key: str) -> str:
 def search_permapeople(query: str, key_id: str, key_secret: str) -> list[dict]:
     """Search Permapeople for plants matching the query string.
 
-    Returns a list of plant dicts shaped for Loam's plant library. Returns an
-    empty list on any error or when credentials are missing.
+    Returns a list of plant dicts shaped for Loam's plant library. Raises on
+    HTTP/network errors so the caller can surface a useful message; returns an
+    empty list only when credentials are missing or the API genuinely matches
+    nothing.
     """
     if not key_id or not key_secret:
         return []
 
-    try:
-        resp = requests.post(
-            PERMAPEOPLE_API_URL,
-            headers={
-                "x-permapeople-key-id": key_id,
-                "x-permapeople-key-secret": key_secret,
-                "Content-Type": "application/json",
-            },
-            json={"q": query},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception:
-        return []
+    resp = requests.post(
+        PERMAPEOPLE_API_URL,
+        headers={
+            "x-permapeople-key-id": key_id,
+            "x-permapeople-key-secret": key_secret,
+            "Content-Type": "application/json",
+            "User-Agent": "Loam-HomeAssistant/1.0",
+        },
+        json={"q": query},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
 
     results = []
     for item in data.get("plants", []):
