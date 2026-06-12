@@ -5,9 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Loam</title>
 
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
-
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -25,6 +22,9 @@
       --badge-inground: #1565c0;
       --badge-container: #6a1b9a;
       --badge-growbag: #bf360c;
+      --cell: 26px;
+      --grid-minor: #243a52;
+      --grid-major: #38567a;
     }
 
     body {
@@ -82,9 +82,80 @@
       flex-direction: row;
     }
 
-    #map {
+    /* ── Grid viewport ── */
+    #grid-viewport {
       flex: 1;
       min-width: 0;
+      overflow: auto;
+      background: var(--bg);
+      position: relative;
+    }
+
+    #grid-empty {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 14px;
+      padding: 24px;
+      pointer-events: none;
+    }
+
+    #grid-canvas {
+      position: relative;
+      margin: 24px;
+      background-color: var(--surface);
+      /* 1-ft minor lines + 5-ft major lines, set per-garden via JS --cell var */
+      background-image:
+        repeating-linear-gradient(to right,  var(--grid-major) 0 1px, transparent 1px calc(var(--cell) * 5)),
+        repeating-linear-gradient(to bottom, var(--grid-major) 0 1px, transparent 1px calc(var(--cell) * 5)),
+        repeating-linear-gradient(to right,  var(--grid-minor) 0 1px, transparent 1px var(--cell)),
+        repeating-linear-gradient(to bottom, var(--grid-minor) 0 1px, transparent 1px var(--cell));
+      border-right: 1px solid var(--grid-major);
+      border-bottom: 1px solid var(--grid-major);
+    }
+
+    #grid-canvas.drawing { cursor: crosshair; }
+
+    .bed-rect {
+      position: absolute;
+      background: rgba(76, 175, 80, 0.22);
+      border: 1.5px solid var(--accent);
+      border-radius: 3px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+
+    .bed-rect:hover,
+    .bed-rect.selected {
+      background: rgba(102, 187, 106, 0.34);
+      border-color: var(--accent-hover);
+    }
+
+    .bed-rect-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: #fff;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+      padding: 2px 4px;
+      text-align: center;
+      pointer-events: none;
+    }
+
+    .draw-selection {
+      position: absolute;
+      background: rgba(102, 187, 106, 0.25);
+      border: 1.5px dashed var(--accent-hover);
+      border-radius: 3px;
+      pointer-events: none;
+      z-index: 5;
     }
 
     .garden-sidebar {
@@ -148,7 +219,8 @@
       transition: border-color 0.2s;
     }
 
-    .bed-card:hover {
+    .bed-card:hover,
+    .bed-card.selected {
       border-color: var(--accent);
     }
 
@@ -431,20 +503,6 @@
       color: #fff;
     }
 
-    /* ── Location bar ── */
-    .location-bar {
-      padding: 10px 16px;
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      flex-shrink: 0;
-    }
-
-    .location-bar input {
-      flex: 1;
-    }
-
     /* ── Status / empty states ── */
     .empty-state {
       text-align: center;
@@ -476,19 +534,11 @@
       padding: 8px 0 4px;
     }
 
-    /* ── Leaflet overrides ── */
-    .leaflet-container {
-      background: #1a1a2e;
-    }
-
-    .leaflet-control-zoom a {
-      background: var(--surface);
-      color: var(--text);
-      border-color: var(--border);
-    }
-
-    .leaflet-draw-toolbar a {
-      background: var(--surface);
+    .grid-hint {
+      font-size: 12px;
+      color: var(--text-muted);
+      padding: 4px 0 10px;
+      line-height: 1.4;
     }
   </style>
 </head>
@@ -502,15 +552,14 @@
 
   <!-- ── Garden Tab ── -->
   <div id="tab-garden" class="tab-content active">
-    <div id="map"></div>
+    <div id="grid-viewport">
+      <div id="grid-canvas" style="display:none"></div>
+      <div id="grid-empty">Select or create a garden to lay out beds.</div>
+    </div>
     <div class="garden-sidebar">
       <div class="garden-select-row">
         <select id="garden-select"><option value="">— select garden —</option></select>
         <button class="btn btn-primary btn-sm" id="btn-new-garden">+ New</button>
-      </div>
-      <div class="location-bar" id="location-bar" style="display:none">
-        <input type="text" id="location-input" placeholder="Search address…" />
-        <button class="btn btn-primary btn-sm" id="btn-geocode">Set</button>
       </div>
       <div class="sidebar-header">
         <h2>Beds</h2>
@@ -585,8 +634,6 @@
     </div>
   </div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
   <script src="/loam_frontend/loam-app.js"></script>
 </body>
 </html>

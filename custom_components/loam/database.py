@@ -1,7 +1,6 @@
 """SQLite database layer for Loam."""
 from __future__ import annotations
 
-import json
 import sqlite3
 from datetime import datetime, timezone
 
@@ -32,6 +31,8 @@ class LoamDatabase:
                 CREATE TABLE IF NOT EXISTS gardens (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL,
+                    width_ft INTEGER,
+                    height_ft INTEGER,
                     lat REAL,
                     lon REAL,
                     address TEXT,
@@ -43,6 +44,10 @@ class LoamDatabase:
                     garden_id INTEGER NOT NULL,
                     name TEXT NOT NULL,
                     type TEXT NOT NULL DEFAULT 'raised_bed',
+                    grid_x INTEGER,
+                    grid_y INTEGER,
+                    grid_w INTEGER,
+                    grid_h INTEGER,
                     shape_geojson TEXT,
                     area_sqft REAL,
                     notes TEXT,
@@ -79,6 +84,22 @@ class LoamDatabase:
                     FOREIGN KEY(plant_id) REFERENCES plants(id)
                 );
             """)
+            self._migrate(conn)
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        """Add columns to pre-existing databases without dropping data."""
+        self._add_column(conn, "gardens", "width_ft", "INTEGER")
+        self._add_column(conn, "gardens", "height_ft", "INTEGER")
+        self._add_column(conn, "beds", "grid_x", "INTEGER")
+        self._add_column(conn, "beds", "grid_y", "INTEGER")
+        self._add_column(conn, "beds", "grid_w", "INTEGER")
+        self._add_column(conn, "beds", "grid_h", "INTEGER")
+
+    @staticmethod
+    def _add_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:
+        existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     # ------------------------------------------------------------------
     # Gardens
@@ -94,31 +115,28 @@ class LoamDatabase:
             row = conn.execute("SELECT * FROM gardens WHERE id = ?", (garden_id,)).fetchone()
             return dict(row) if row else None
 
-    def create_garden(self, name: str, lat: float | None, lon: float | None, address: str | None) -> dict:
+    def create_garden(self, name: str, width_ft: int, height_ft: int) -> dict:
         with self._connect() as conn:
             cur = conn.execute(
-                "INSERT INTO gardens (name, lat, lon, address, created_at) VALUES (?, ?, ?, ?, ?)",
-                (name, lat, lon, address, _utcnow()),
+                "INSERT INTO gardens (name, width_ft, height_ft, created_at) VALUES (?, ?, ?, ?)",
+                (name, width_ft, height_ft, _utcnow()),
             )
             row = conn.execute("SELECT * FROM gardens WHERE id = ?", (cur.lastrowid,)).fetchone()
             return dict(row)
 
-    def update_garden(self, garden_id: int, name: str | None, lat: float | None,
-                      lon: float | None, address: str | None) -> dict | None:
+    def update_garden(self, garden_id: int, name: str | None,
+                      width_ft: int | None, height_ft: int | None) -> dict | None:
         with self._connect() as conn:
             updates, params = [], []
             if name is not None:
                 updates.append("name = ?")
                 params.append(name)
-            if lat is not None:
-                updates.append("lat = ?")
-                params.append(lat)
-            if lon is not None:
-                updates.append("lon = ?")
-                params.append(lon)
-            if address is not None:
-                updates.append("address = ?")
-                params.append(address)
+            if width_ft is not None:
+                updates.append("width_ft = ?")
+                params.append(width_ft)
+            if height_ft is not None:
+                updates.append("height_ft = ?")
+                params.append(height_ft)
             if not updates:
                 return self.get_garden(garden_id)
             params.append(garden_id)
@@ -159,12 +177,14 @@ class LoamDatabase:
             return bed
 
     def create_bed(self, garden_id: int, name: str, bed_type: str,
-                   shape_geojson: str | None, area_sqft: float | None, notes: str | None) -> dict:
+                   grid_x: int, grid_y: int, grid_w: int, grid_h: int,
+                   notes: str | None) -> dict:
         with self._connect() as conn:
             cur = conn.execute(
-                "INSERT INTO beds (garden_id, name, type, shape_geojson, area_sqft, notes, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (garden_id, name, bed_type, shape_geojson, area_sqft, notes, _utcnow()),
+                "INSERT INTO beds (garden_id, name, type, grid_x, grid_y, grid_w, grid_h, "
+                "area_sqft, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (garden_id, name, bed_type, grid_x, grid_y, grid_w, grid_h,
+                 grid_w * grid_h, notes, _utcnow()),
             )
             row = conn.execute("SELECT * FROM beds WHERE id = ?", (cur.lastrowid,)).fetchone()
             bed = dict(row)
@@ -172,7 +192,8 @@ class LoamDatabase:
             return bed
 
     def update_bed(self, bed_id: int, name: str | None, bed_type: str | None,
-                   shape_geojson: str | None, area_sqft: float | None, notes: str | None) -> dict | None:
+                   grid_x: int | None, grid_y: int | None,
+                   grid_w: int | None, grid_h: int | None, notes: str | None) -> dict | None:
         with self._connect() as conn:
             updates, params = [], []
             if name is not None:
@@ -181,12 +202,21 @@ class LoamDatabase:
             if bed_type is not None:
                 updates.append("type = ?")
                 params.append(bed_type)
-            if shape_geojson is not None:
-                updates.append("shape_geojson = ?")
-                params.append(shape_geojson)
-            if area_sqft is not None:
+            if grid_x is not None:
+                updates.append("grid_x = ?")
+                params.append(grid_x)
+            if grid_y is not None:
+                updates.append("grid_y = ?")
+                params.append(grid_y)
+            if grid_w is not None:
+                updates.append("grid_w = ?")
+                params.append(grid_w)
+            if grid_h is not None:
+                updates.append("grid_h = ?")
+                params.append(grid_h)
+            if grid_w is not None and grid_h is not None:
                 updates.append("area_sqft = ?")
-                params.append(area_sqft)
+                params.append(grid_w * grid_h)
             if notes is not None:
                 updates.append("notes = ?")
                 params.append(notes)

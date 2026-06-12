@@ -16,14 +16,24 @@
   });
 
   // ── State ──────────────────────────────────────────────────────────────────
+  const CELL = 26; // pixels per foot — keep in sync with --cell in loam-panel.html
+
   const state = {
     gardens: [],
     activeGardenId: null,
     beds: [],
     plants: [],
     plantings: [],
-    drawingActive: false,
+    drawing: false,
+    selectedBedId: null,
   };
+
+  const activeGarden = () => state.gardens.find(g => g.id === state.activeGardenId);
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
 
   // ── API helpers ────────────────────────────────────────────────────────────
   async function api(method, path, body) {
@@ -56,195 +66,288 @@
 
       if (tab.dataset.tab === "library") renderLibrary();
       if (tab.dataset.tab === "plantings") renderPlantings();
-      if (tab.dataset.tab === "garden") map.invalidateSize();
+      if (tab.dataset.tab === "garden") renderGrid();
     });
   });
 
-  // ── Map setup ──────────────────────────────────────────────────────────────
-  const map = L.map("map", { zoomControl: true }).setView([39.5, -98.35], 4);
+  // ── Grid elements ──────────────────────────────────────────────────────────
+  const canvas = document.getElementById("grid-canvas");
+  const gridEmpty = document.getElementById("grid-empty");
 
-  L.tileLayer(
-    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    { attribution: "Tiles © Esri", maxZoom: 21 }
-  ).addTo(map);
+  function renderGrid() {
+    const g = activeGarden();
+    if (!g) {
+      canvas.style.display = "none";
+      gridEmpty.style.display = "flex";
+      return;
+    }
+    gridEmpty.style.display = "none";
+    canvas.style.display = "block";
 
-  const drawnItems = new L.FeatureGroup().addTo(map);
+    const w = g.width_ft || 1;
+    const h = g.height_ft || 1;
+    canvas.style.width = (w * CELL) + "px";
+    canvas.style.height = (h * CELL) + "px";
 
-  const drawControl = new L.Control.Draw({
-    edit: { featureGroup: drawnItems },
-    draw: {
-      polygon:   { shapeOptions: { color: "#4caf50", fillOpacity: 0.25 } },
-      rectangle: { shapeOptions: { color: "#4caf50", fillOpacity: 0.25 } },
-      polyline:  false,
-      circle:    false,
-      circlemarker: false,
-      marker:    false,
-    },
-  });
-
-  let pendingShape = null;
-
-  map.on(L.Draw.Event.CREATED, e => {
-    drawnItems.clearLayers();
-    drawnItems.addLayer(e.layer);
-    pendingShape = e.layer.toGeoJSON();
-    showBedForm();
-  });
-
-  map.on(L.Draw.Event.EDITED, async e => {
-    e.layers.eachLayer(async layer => {
-      const bedId = layer.loamBedId;
-      if (!bedId) return;
-      const geo = JSON.stringify(layer.toGeoJSON());
-      await put(`/beds/${bedId}`, { shape_geojson: geo }).catch(() => {});
+    canvas.innerHTML = "";
+    state.beds.forEach(bed => {
+      if (bed.grid_w == null || bed.grid_h == null) return; // skip beds with no footprint
+      const div = document.createElement("div");
+      div.className = "bed-rect" + (bed.id === state.selectedBedId ? " selected" : "");
+      div.style.left   = (bed.grid_x * CELL) + "px";
+      div.style.top    = (bed.grid_y * CELL) + "px";
+      div.style.width  = (bed.grid_w * CELL) + "px";
+      div.style.height = (bed.grid_h * CELL) + "px";
+      div.innerHTML = `<span class="bed-rect-label">${escapeHtml(bed.name)}</span>`;
+      div.addEventListener("click", e => {
+        if (state.drawing) return;
+        e.stopPropagation();
+        selectBed(bed.id);
+      });
+      canvas.appendChild(div);
     });
-    await loadBeds();
+  }
+
+  // ── Bed drawing (snap to 1-ft cells) ─────────────────────────────────────────
+  let dragStart = null;
+  let selRect = null;
+  let pendingBed = null;
+
+  function cellFromEvent(e) {
+    const g = activeGarden();
+    const r = canvas.getBoundingClientRect();
+    let cx = Math.floor((e.clientX - r.left) / CELL);
+    let cy = Math.floor((e.clientY - r.top) / CELL);
+    cx = Math.max(0, Math.min(cx, g.width_ft - 1));
+    cy = Math.max(0, Math.min(cy, g.height_ft - 1));
+    return { cx, cy };
+  }
+
+  function normalizeCells(sx, sy, ex, ey) {
+    return {
+      grid_x: Math.min(sx, ex),
+      grid_y: Math.min(sy, ey),
+      grid_w: Math.abs(ex - sx) + 1,
+      grid_h: Math.abs(ey - sy) + 1,
+    };
+  }
+
+  function paintSelection(rect) {
+    if (!selRect) return;
+    selRect.style.left   = (rect.grid_x * CELL) + "px";
+    selRect.style.top    = (rect.grid_y * CELL) + "px";
+    selRect.style.width  = (rect.grid_w * CELL) + "px";
+    selRect.style.height = (rect.grid_h * CELL) + "px";
+  }
+
+  function rectsOverlap(a, b) {
+    return a.grid_x < b.grid_x + b.grid_w &&
+           a.grid_x + a.grid_w > b.grid_x &&
+           a.grid_y < b.grid_y + b.grid_h &&
+           a.grid_y + a.grid_h > b.grid_y;
+  }
+
+  canvas.addEventListener("mousedown", e => {
+    if (!state.drawing) return;
+    e.preventDefault();
+    const { cx, cy } = cellFromEvent(e);
+    dragStart = { cx, cy };
+    selRect = document.createElement("div");
+    selRect.className = "draw-selection";
+    canvas.appendChild(selRect);
+    paintSelection(normalizeCells(cx, cy, cx, cy));
   });
 
-  map.on(L.Draw.Event.DELETED, async e => {
-    e.layers.eachLayer(async layer => {
-      if (layer.loamBedId) {
-        await del(`/beds/${layer.loamBedId}`).catch(() => {});
-      }
-    });
-    await loadBeds();
+  canvas.addEventListener("mousemove", e => {
+    if (!state.drawing || !dragStart) return;
+    const { cx, cy } = cellFromEvent(e);
+    paintSelection(normalizeCells(dragStart.cx, dragStart.cy, cx, cy));
   });
 
-  // ── Garden selector ────────────────────────────────────────────────────────
+  window.addEventListener("mouseup", e => {
+    if (!state.drawing || !dragStart) return;
+    const { cx, cy } = cellFromEvent(e);
+    const rect = normalizeCells(dragStart.cx, dragStart.cy, cx, cy);
+    dragStart = null;
+    if (selRect) { selRect.remove(); selRect = null; }
+
+    if (state.beds.some(b => b.grid_w != null && rectsOverlap(rect, b))) {
+      alert("Beds can't overlap. Try a different spot.");
+      return;
+    }
+    pendingBed = rect;
+    showBedForm(rect);
+  });
+
+  function enterDrawMode() {
+    if (!state.activeGardenId) return;
+    state.drawing = true;
+    canvas.classList.add("drawing");
+    document.getElementById("btn-add-bed").textContent = "Cancel";
+  }
+
+  function exitDrawMode() {
+    state.drawing = false;
+    canvas.classList.remove("drawing");
+    if (selRect) { selRect.remove(); selRect = null; }
+    dragStart = null;
+    document.getElementById("btn-add-bed").textContent = "+ Bed";
+  }
+
+  // ── Garden selector ──────────────────────────────────────────────────────────
   async function loadGardens() {
     state.gardens = await get("/garden");
     const sel = document.getElementById("garden-select");
     const prev = state.activeGardenId;
     sel.innerHTML = '<option value="">— select garden —</option>' +
-      state.gardens.map(g => `<option value="${g.id}">${g.name}</option>`).join("");
+      state.gardens.map(g => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join("");
     if (prev && state.gardens.find(g => g.id === prev)) sel.value = prev;
     populatePlantingGardenDropdowns();
   }
 
   document.getElementById("garden-select").addEventListener("change", async e => {
-    const id = parseInt(e.target.value);
+    const id = parseInt(e.target.value, 10);
     state.activeGardenId = id || null;
-    document.getElementById("location-bar").style.display = id ? "flex" : "none";
+    state.selectedBedId = null;
+    exitDrawMode();
     document.getElementById("btn-add-bed").style.display = id ? "inline-block" : "none";
-    if (id) {
-      const garden = state.gardens.find(g => g.id === id);
-      if (garden && garden.lat && garden.lon) {
-        map.setView([garden.lat, garden.lon], 17);
-      }
+    await loadBeds();
+  });
+
+  document.getElementById("btn-new-garden").addEventListener("click", showGardenForm);
+
+  function showGardenForm() {
+    const list = document.getElementById("beds-list");
+    if (document.getElementById("new-garden-form")) return;
+    list.insertAdjacentHTML("afterbegin", `
+      <div class="bed-form" id="new-garden-form">
+        <h3>New garden</h3>
+        <div class="form-group">
+          <label>Name</label>
+          <input type="text" id="ng-name" placeholder="e.g. Backyard" />
+        </div>
+        <div class="form-group">
+          <label>Width (feet)</label>
+          <input type="number" id="ng-width" min="1" max="200" value="20" />
+        </div>
+        <div class="form-group">
+          <label>Height (feet)</label>
+          <input type="number" id="ng-height" min="1" max="200" value="20" />
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm" id="ng-save">Create</button>
+          <button class="btn btn-ghost btn-sm" id="ng-cancel">Cancel</button>
+        </div>
+      </div>
+    `);
+    document.getElementById("ng-save").addEventListener("click", saveNewGarden);
+    document.getElementById("ng-cancel").addEventListener("click", () => {
+      document.getElementById("new-garden-form").remove();
+      renderBedList();
+    });
+    document.getElementById("ng-name").focus();
+  }
+
+  async function saveNewGarden() {
+    const name = document.getElementById("ng-name").value.trim();
+    const w = parseInt(document.getElementById("ng-width").value, 10);
+    const h = parseInt(document.getElementById("ng-height").value, 10);
+    if (!name) { alert("Name is required."); return; }
+    if (!(w >= 1 && w <= 200) || !(h >= 1 && h <= 200)) {
+      alert("Width and height must be between 1 and 200 feet.");
+      return;
+    }
+    try {
+      const g = await post("/garden", { name, width_ft: w, height_ft: h });
+      state.activeGardenId = g.id;
+      state.selectedBedId = null;
+      await loadGardens();
+      document.getElementById("garden-select").value = g.id;
+      document.getElementById("btn-add-bed").style.display = "inline-block";
       await loadBeds();
+    } catch (err) {
+      alert("Error: " + err.message);
+    }
+  }
+
+  // ── Beds ─────────────────────────────────────────────────────────────────────
+  async function loadBeds() {
+    if (state.activeGardenId) {
+      state.beds = await get(`/beds?garden_id=${state.activeGardenId}`);
     } else {
       state.beds = [];
-      renderBedList();
-      drawnItems.clearLayers();
     }
-  });
-
-  document.getElementById("btn-new-garden").addEventListener("click", () => {
-    const name = prompt("Garden name:");
-    if (!name || !name.trim()) return;
-    post("/garden", { name: name.trim() })
-      .then(g => {
-        state.activeGardenId = g.id;
-        return loadGardens();
-      })
-      .then(() => {
-        document.getElementById("garden-select").value = state.activeGardenId;
-        document.getElementById("location-bar").style.display = "flex";
-        document.getElementById("btn-add-bed").style.display = "inline-block";
-        loadBeds();
-      })
-      .catch(err => alert("Error: " + err.message));
-  });
-
-  // ── Location / geocode ─────────────────────────────────────────────────────
-  document.getElementById("btn-geocode").addEventListener("click", async () => {
-    const query = document.getElementById("location-input").value.trim();
-    if (!query) return;
-    try {
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`,
-        { headers: { "Accept-Language": "en" } }
-      );
-      const data = await res.json();
-      if (!data.length) { alert("Address not found."); return; }
-      const { lat, lon, display_name } = data[0];
-      map.setView([parseFloat(lat), parseFloat(lon)], 17);
-      await put(`/garden/${state.activeGardenId}`, {
-        lat: parseFloat(lat),
-        lon: parseFloat(lon),
-        address: display_name,
-      });
-      const idx = state.gardens.findIndex(g => g.id === state.activeGardenId);
-      if (idx !== -1) {
-        state.gardens[idx].lat = parseFloat(lat);
-        state.gardens[idx].lon = parseFloat(lon);
-        state.gardens[idx].address = display_name;
-      }
-    } catch (e) {
-      alert("Geocode failed: " + e.message);
-    }
-  });
-
-  // ── Beds ───────────────────────────────────────────────────────────────────
-  async function loadBeds() {
-    if (!state.activeGardenId) return;
-    state.beds = await get(`/beds?garden_id=${state.activeGardenId}`);
     renderBedList();
-    renderBedsOnMap();
+    renderGrid();
   }
 
   function renderBedList() {
     const el = document.getElementById("beds-list");
+    if (!state.activeGardenId) { el.innerHTML = ""; return; }
     if (!state.beds.length) {
-      el.innerHTML = '<div class="empty-state">No beds yet.<br/>Draw a shape on the map to add one.</div>';
+      el.innerHTML = '<div class="empty-state">No beds yet.<br/>Click “+ Bed”, then drag on the grid to draw one.</div>';
       return;
     }
-    el.innerHTML = state.beds.map(bed => {
-      const typeLabel = bed.type.replace("_", " ");
-      const area = bed.area_sqft ? `${bed.area_sqft.toFixed(1)} sqft · ` : "";
-      return `
-        <div class="bed-card" data-bed-id="${bed.id}">
-          <div class="bed-card-header">
-            <span class="bed-name">${bed.name}</span>
-            <span class="bed-badge ${bed.type}">${typeLabel}</span>
-          </div>
-          <div class="bed-meta">${area}${bed.planting_count} active planting${bed.planting_count !== 1 ? "s" : ""}</div>
-        </div>`;
-    }).join("");
+    el.innerHTML =
+      '<div class="grid-hint">Each square is 1 ft. Click “+ Bed”, then drag across the grid to lay one out.</div>' +
+      state.beds.map(bed => {
+        const typeLabel = bed.type.replace("_", " ");
+        const size = (bed.grid_w != null && bed.grid_h != null)
+          ? `${bed.grid_w}×${bed.grid_h} ft · ` : "";
+        const sel = bed.id === state.selectedBedId ? " selected" : "";
+        return `
+          <div class="bed-card${sel}" data-bed-id="${bed.id}">
+            <div class="bed-card-header">
+              <span class="bed-name">${escapeHtml(bed.name)}</span>
+              <span class="bed-badge ${bed.type}">${typeLabel}</span>
+            </div>
+            <div class="bed-meta">${size}${bed.planting_count} active planting${bed.planting_count !== 1 ? "s" : ""}</div>
+            <div class="planting-actions">
+              <button class="btn btn-danger btn-sm" data-delete-bed="${bed.id}">Delete</button>
+            </div>
+          </div>`;
+      }).join("");
+
+    el.querySelectorAll(".bed-card").forEach(card => {
+      card.addEventListener("click", e => {
+        if (e.target.closest("[data-delete-bed]")) return;
+        selectBed(parseInt(card.dataset.bedId, 10));
+      });
+    });
+
+    el.querySelectorAll("[data-delete-bed]").forEach(btn => {
+      btn.addEventListener("click", async e => {
+        e.stopPropagation();
+        if (!confirm("Delete this bed? Its plantings will be removed too.")) return;
+        const id = parseInt(btn.dataset.deleteBed, 10);
+        await del(`/beds/${id}`).catch(err => alert(err.message));
+        if (state.selectedBedId === id) state.selectedBedId = null;
+        await loadBeds();
+      });
+    });
   }
 
-  function renderBedsOnMap() {
-    drawnItems.clearLayers();
-    state.beds.forEach(bed => {
-      if (!bed.shape_geojson) return;
-      try {
-        const geo = typeof bed.shape_geojson === "string"
-          ? JSON.parse(bed.shape_geojson)
-          : bed.shape_geojson;
-        const layer = L.geoJSON(geo, {
-          style: { color: "#4caf50", weight: 2, fillOpacity: 0.2 },
-        });
-        layer.eachLayer(l => {
-          l.loamBedId = bed.id;
-          l.bindTooltip(bed.name, { permanent: false, direction: "center" });
-        });
-        drawnItems.addLayer(layer);
-      } catch (_) {}
-    });
+  function selectBed(id) {
+    state.selectedBedId = (state.selectedBedId === id) ? null : id;
+    renderGrid();
+    renderBedList();
   }
 
   document.getElementById("btn-add-bed").addEventListener("click", () => {
     if (!state.activeGardenId) return;
-    if (!map.hasControl(drawControl)) map.addControl(drawControl);
-    new L.Draw.Polygon(map, drawControl.options.draw.polygon).enable();
+    if (state.drawing) exitDrawMode();
+    else enterDrawMode();
   });
 
-  // ── Bed form (shown after drawing) ────────────────────────────────────────
-  function showBedForm() {
+  // ── Bed form (shown after drawing) ──────────────────────────────────────────
+  function showBedForm(rect) {
+    exitDrawMode();
     const list = document.getElementById("beds-list");
+    const existing = document.getElementById("new-bed-form");
+    if (existing) existing.remove();
     list.insertAdjacentHTML("afterbegin", `
       <div class="bed-form" id="new-bed-form">
-        <h3>Name this bed</h3>
+        <h3>New bed · ${rect.grid_w} × ${rect.grid_h} ft</h3>
         <div class="form-group">
           <label>Name</label>
           <input type="text" id="new-bed-name" placeholder="e.g. South Raised Bed" />
@@ -269,56 +372,39 @@
       </div>
     `);
 
-    document.getElementById("btn-save-bed").addEventListener("click", saveNewBed);
-    document.getElementById("btn-cancel-bed").addEventListener("click", cancelBedForm);
+    document.getElementById("btn-save-bed").addEventListener("click", () => saveNewBed(rect));
+    document.getElementById("btn-cancel-bed").addEventListener("click", () => {
+      pendingBed = null;
+      renderBedList();
+    });
+    document.getElementById("new-bed-name").focus();
   }
 
-  async function saveNewBed() {
+  async function saveNewBed(rect) {
     const name = document.getElementById("new-bed-name").value.trim();
     if (!name) { alert("Name is required."); return; }
     const bedType = document.getElementById("new-bed-type").value;
     const notes = document.getElementById("new-bed-notes").value.trim();
-
-    const area = pendingShape ? calcAreaSqft(pendingShape) : null;
 
     try {
       await post("/beds", {
         garden_id: state.activeGardenId,
         name,
         type: bedType,
-        shape_geojson: pendingShape ? JSON.stringify(pendingShape) : null,
-        area_sqft: area,
+        grid_x: rect.grid_x,
+        grid_y: rect.grid_y,
+        grid_w: rect.grid_w,
+        grid_h: rect.grid_h,
         notes: notes || null,
       });
-      pendingShape = null;
-      document.getElementById("new-bed-form").remove();
+      pendingBed = null;
       await loadBeds();
     } catch (e) {
       alert("Error: " + e.message);
     }
   }
 
-  function cancelBedForm() {
-    pendingShape = null;
-    drawnItems.clearLayers();
-    document.getElementById("new-bed-form").remove();
-    renderBedsOnMap();
-  }
-
-  function calcAreaSqft(geojson) {
-    const coords = geojson.geometry?.coordinates?.[0];
-    if (!coords || coords.length < 3) return null;
-    // Shoelace in degrees → crude sqft (good enough for small areas)
-    let area = 0;
-    for (let i = 0, j = coords.length - 1; i < coords.length; j = i++) {
-      area += (coords[j][0] + coords[i][0]) * (coords[j][1] - coords[i][1]);
-    }
-    const sqDeg = Math.abs(area / 2);
-    const sqMeters = sqDeg * 111320 * 111320 * Math.cos((coords[0][1] * Math.PI) / 180);
-    return parseFloat((sqMeters * 10.7639).toFixed(1));
-  }
-
-  // ── Library ────────────────────────────────────────────────────────────────
+  // ── Library ──────────────────────────────────────────────────────────────────
   async function renderLibrary() {
     state.plants = await get("/plants");
     renderPlantLibrary();
@@ -451,7 +537,7 @@
     });
   });
 
-  // ── Plantings ──────────────────────────────────────────────────────────────
+  // ── Plantings ────────────────────────────────────────────────────────────────
   async function renderPlantings() {
     await loadAllDataForPlantings();
     renderPlantingsList();
@@ -471,7 +557,7 @@
   }
 
   function populatePlantingGardenDropdowns() {
-    const opts = state.gardens.map(g => `<option value="${g.id}">${g.name}</option>`).join("");
+    const opts = state.gardens.map(g => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join("");
     const filterOpts = '<option value="">All gardens</option>' + opts;
 
     const sel = document.getElementById("planting-garden-select");
@@ -610,10 +696,10 @@
       const g = state.gardens[0];
       state.activeGardenId = g.id;
       document.getElementById("garden-select").value = g.id;
-      document.getElementById("location-bar").style.display = "flex";
       document.getElementById("btn-add-bed").style.display = "inline-block";
-      if (g.lat && g.lon) map.setView([g.lat, g.lon], 17);
       await loadBeds();
+    } else {
+      renderGrid();
     }
   }
 

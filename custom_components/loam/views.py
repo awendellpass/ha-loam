@@ -8,11 +8,40 @@ from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN, BED_TYPES, PLANTING_STATUSES
+from .const import DOMAIN, BED_TYPES, PLANTING_STATUSES, MAX_GARDEN_FT
 
 
 def _db(request: web.Request):
     return request.app["hass"].data[DOMAIN]["db"]
+
+
+def _as_dim(value: Any, label: str) -> tuple[int | None, str | None]:
+    """Coerce a value to a positive integer within garden bounds."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None, f"{label} must be a whole number"
+    if n < 1 or n > MAX_GARDEN_FT:
+        return None, f"{label} must be between 1 and {MAX_GARDEN_FT}"
+    return n, None
+
+
+def _bed_coords(body: dict) -> tuple[dict | None, str | None]:
+    """Validate a bed's grid footprint: origin >= 0, size >= 1, within bounds."""
+    try:
+        x = int(body["grid_x"])
+        y = int(body["grid_y"])
+        w = int(body["grid_w"])
+        h = int(body["grid_h"])
+    except (KeyError, TypeError, ValueError):
+        return None, "grid_x, grid_y, grid_w, grid_h are required"
+    if x < 0 or y < 0:
+        return None, "grid_x and grid_y must be 0 or greater"
+    if w < 1 or h < 1:
+        return None, "grid_w and grid_h must be at least 1"
+    if x + w > MAX_GARDEN_FT or y + h > MAX_GARDEN_FT:
+        return None, "bed extends beyond the maximum garden size"
+    return {"grid_x": x, "grid_y": y, "grid_w": w, "grid_h": h}, None
 
 
 def _json(data: Any, status: int = 200) -> web.Response:
@@ -64,19 +93,25 @@ class LoamGardenView(HomeAssistantView):
         if not name:
             return _error("name is required")
 
+        width_ft, err = _as_dim(body.get("width_ft"), "width_ft")
+        if err:
+            return _error(err)
+        height_ft, err = _as_dim(body.get("height_ft"), "height_ft")
+        if err:
+            return _error(err)
+
         db = _db(request)
         garden = await request.app["hass"].async_add_executor_job(
             db.create_garden,
             name,
-            body.get("lat"),
-            body.get("lon"),
-            body.get("address"),
+            width_ft,
+            height_ft,
         )
         return _json(garden, 201)
 
 
 # ---------------------------------------------------------------------------
-# PUT /api/loam/garden/{garden_id}   — update garden (name, lat, lon, address)
+# PUT /api/loam/garden/{garden_id}   — update garden (name, width_ft, height_ft)
 # ---------------------------------------------------------------------------
 
 class LoamGardenDetailView(HomeAssistantView):
@@ -95,14 +130,23 @@ class LoamGardenDetailView(HomeAssistantView):
         except Exception:
             return _error("Invalid JSON")
 
+        width_ft = height_ft = None
+        if body.get("width_ft") is not None:
+            width_ft, err = _as_dim(body.get("width_ft"), "width_ft")
+            if err:
+                return _error(err)
+        if body.get("height_ft") is not None:
+            height_ft, err = _as_dim(body.get("height_ft"), "height_ft")
+            if err:
+                return _error(err)
+
         db = _db(request)
         garden = await request.app["hass"].async_add_executor_job(
             db.update_garden,
             gid,
             body.get("name"),
-            body.get("lat"),
-            body.get("lon"),
-            body.get("address"),
+            width_ft,
+            height_ft,
         )
         if garden is None:
             return _error("Garden not found", 404)
@@ -143,14 +187,20 @@ class LoamBedsView(HomeAssistantView):
         if bed_type not in BED_TYPES:
             return _error(f"type must be one of: {', '.join(BED_TYPES)}")
 
+        coords, err = _bed_coords(body)
+        if err:
+            return _error(err)
+
         db = _db(request)
         bed = await request.app["hass"].async_add_executor_job(
             db.create_bed,
             int(garden_id),
             name,
             bed_type,
-            body.get("shape_geojson"),
-            body.get("area_sqft"),
+            coords["grid_x"],
+            coords["grid_y"],
+            coords["grid_w"],
+            coords["grid_h"],
             body.get("notes"),
         )
         return _json(bed, 201)
@@ -181,14 +231,24 @@ class LoamBedDetailView(HomeAssistantView):
         if bed_type is not None and bed_type not in BED_TYPES:
             return _error(f"type must be one of: {', '.join(BED_TYPES)}")
 
+        # Grid coords are optional on update, but if any are sent, all must be valid.
+        grid = {"grid_x": None, "grid_y": None, "grid_w": None, "grid_h": None}
+        if any(body.get(k) is not None for k in grid):
+            coords, err = _bed_coords(body)
+            if err:
+                return _error(err)
+            grid = coords
+
         db = _db(request)
         bed = await request.app["hass"].async_add_executor_job(
             db.update_bed,
             bid,
             body.get("name"),
             bed_type,
-            body.get("shape_geojson"),
-            body.get("area_sqft"),
+            grid["grid_x"],
+            grid["grid_y"],
+            grid["grid_w"],
+            grid["grid_h"],
             body.get("notes"),
         )
         if bed is None:

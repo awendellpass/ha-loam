@@ -1,11 +1,11 @@
 # Loam — Home Assistant Garden Manager
 
-A Home Assistant custom integration for managing outdoor gardens. Satellite map-based interface for drawing garden beds, building a plant library, and logging plantings.
+A Home Assistant custom integration for managing outdoor gardens. A grid-based layout interface for drawing garden beds to scale, building a plant library, and logging plantings.
 
 ## Features
 
-- **Satellite map** — Draw garden beds directly on ESRI World Imagery tiles using Leaflet.js
-- **Multiple gardens** — Manage separate garden spaces from one panel
+- **Grid layout** — Lay out beds to scale on a per-garden grid where each square is 1 square foot
+- **Multiple gardens** — Manage separate garden spaces, each with its own dimensions, from one panel
 - **Bed types** — Raised bed, in-ground, container, grow bag
 - **Plant library** — Live search via OpenFarm API (free, no key required); save plants locally or add custom entries
 - **Planting log** — Record what was planted, when, and where; mark harvested or removed
@@ -24,6 +24,5 @@ A Home Assistant custom integration for managing outdoor gardens. Satellite map-
 
 - Python backend with SQLite (aiohttp REST API)
 - Vanilla JS frontend served as HA iframe panel
-- Leaflet.js + Leaflet.draw via CDN
-- ESRI World Imagery satellite tiles (free, no API key)
+- Grid layout is plain DOM/CSS — no map libraries or CDN dependencies
 - OpenFarm API for plant data (free, no API key)

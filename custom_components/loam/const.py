@@ -17,3 +17,7 @@ except ImportError:
 BED_TYPES = ["raised_bed", "in_ground", "container", "grow_bag"]
 
 PLANTING_STATUSES = ["active", "harvested", "removed"]
+
+# Largest garden dimension (feet) allowed in either direction. Bounds the grid
+# canvas and validates bed footprints server-side.
+MAX_GARDEN_FT = 200
