@@ -1,8 +1,11 @@
 # Loam — Claude Project Conventions
 
-Loam is a Home Assistant custom integration for outdoor garden management. It provides a grid-based layout interface for drawing garden beds to scale (1 square = 1 foot), building a plant library, and logging plantings.
+Loam is a Home Assistant custom integration for outdoor garden management. It provides a grid-based layout interface where each garden is drawn to scale (1 square = 1 foot), plus a plant library and a planting log.
 
-> **Layout model (current):** The satellite-map approach was shelved for a later iteration — it didn't give the granularity needed at bed scale. The Garden tab is now a per-garden grid canvas: each garden has a width/height in feet, and beds are rectangles snapped to whole-foot cells. The 1-ft cells are the foundation for placing individual plants per cell (square-foot gardening) in a future iteration.
+> **Layout model (current):** Two deliberate simplifications were made.
+> 1. The satellite-map approach was shelved for a later iteration — it didn't give the granularity needed at bed scale.
+> 2. The garden→bed split was then **collapsed into a single element: the garden.** A garden is itself a to-scale grid (its own `width_ft` × `height_ft`) with a `type`; plants are placed directly into its 1-ft cells. There is no separate "bed" layer. "Multiple garden plots" = multiple gardens. If a whole-yard map with beds positioned relative to each other is ever needed, reintroduce a parent layer above gardens — restructure later only if the need arises.
+> The 1-ft cells are the foundation for placing individual plants per cell (square-foot gardening) in a future iteration.
 
 ## Stack
 
@@ -18,7 +21,7 @@ Loam is a Home Assistant custom integration for outdoor garden management. It pr
 custom_components/loam/
   __init__.py       — setup, view + panel registration
   manifest.json     — requirements: requests
-  const.py          — TOMORROW_API_KEY, DOMAIN, OPENFARM_API_URL
+  const.py          — DOMAIN, OPENFARM_API_URL, GARDEN_TYPES, MAX_GARDEN_FT, TOMORROW_API_KEY
   database.py       — all SQLite CRUD
   api.py            — OpenFarm search
   views.py          — REST endpoints
@@ -26,41 +29,41 @@ custom_components/loam/
   frontend/
     loam-panel.html   — grid markup + all CSS
     loam-panel.js     — HA web component (iframe + postMessage auth)
-    loam-app.js       — app logic (grid render, bed drawing, library, plantings)
+    loam-app.js       — app logic (grid render, garden CRUD, library, plantings)
 ```
 
 ## Database Schema
 
-- **gardens** — `id, name, width_ft, height_ft, created_at` (multiple gardens supported; `lat/lon/address` columns remain from the map era but are unused)
-- **beds** — `id, garden_id, name, type (raised_bed/in_ground/container/grow_bag), grid_x, grid_y, grid_w, grid_h, area_sqft, notes, created_at` (`shape_geojson` column remains but is unused; `area_sqft` = `grid_w * grid_h`)
+- **gardens** — `id, name, type (raised_bed/in_ground/container/grow_bag), width_ft, height_ft, created_at` (multiple gardens supported; each garden is the grid)
 - **plants** — `id, name, openfarm_slug, description, sun_requirements, sowing_method, row_spacing_cm, spread_cm, days_to_maturity_min, days_to_maturity_max, is_custom, created_at`
-- **plantings** — `id, bed_id, plant_id, planted_date, quantity, notes, status (active/harvested/removed), removed_date, created_at`
+- **plantings** — `id, garden_id, plant_id, planted_date, quantity, notes, status (active/harvested/removed), removed_date, created_at`
+
+> There is **no `beds` table** — it was collapsed into `gardens`. `database.py` migrates older DBs: it adds `type/width_ft/height_ft` to `gardens`, rebuilds `plantings` to reference `garden_id`, and drops `beds`. The plant library is preserved.
 
 ## API Endpoints
 
 ```
-GET/POST  /api/loam/garden
-GET/POST  /api/loam/beds
-PUT/DELETE /api/loam/beds/{id}
-GET/POST  /api/loam/plants
-GET       /api/loam/plants/search?q=
-DELETE    /api/loam/plants/{id}
-GET/POST  /api/loam/plantings
+GET/POST   /api/loam/garden
+PUT/DELETE /api/loam/garden/{id}
+GET/POST   /api/loam/plants
+GET        /api/loam/plants/search?q=
+DELETE     /api/loam/plants/{id}
+GET/POST   /api/loam/plantings        (filter: ?garden_id= &status=)
 PUT/DELETE /api/loam/plantings/{id}
 ```
 
 ## UI — 3 Tabs
 
-- **Garden:** Per-garden grid canvas (1 square = 1 ft), draw beds by dragging a snapped rectangle, list beds with type badge, footprint (W×H ft), and planting counts
+- **Garden:** Sidebar lists gardens (name, type badge, W×H ft, planting count) with **+ New** and per-card **Delete**. Selecting a garden renders its to-scale grid (1 square = 1 ft) in the main area. Creating a garden is a form: name, type, width, height.
 - **Library:** Live OpenFarm search, save to local library, add custom plants, browse saved plants
-- **Plantings:** Log new planting (bed + plant + date + quantity + notes), view active plantings by bed, mark harvested/removed
+- **Plantings:** Log new planting (garden + plant + date + quantity + notes), view active plantings grouped by garden, mark harvested/removed
 
 ## Hard Constraints
 
 - **Multiple gardens supported from the start** — never assume single-garden
+- **A garden IS the grid** — there is no bed layer; do not reintroduce one without an explicit decision
 - **Each garden has a size in feet** (`width_ft` × `height_ft`); the grid renders to those bounds, capped by `MAX_GARDEN_FT` in `const.py`
-- **Beds are whole-foot rectangles** — `grid_x/grid_y` origin (0-based), `grid_w/grid_h` size (≥1); snapped to 1-ft cells; beds must not overlap
-- **Beds have a type field:** `raised_bed`, `in_ground`, `container`, `grow_bag`
+- **Gardens have a type field:** `raised_bed`, `in_ground`, `container`, `grow_bag` (constant `GARDEN_TYPES`)
 - **Dark theme** — consistent with Aura and Ember
 - **No debug logging** in finished code
 - **No inline CSS** — all styles in the `<style>` block in the HTML file (the grid cell size lives in the `--cell` CSS var and the `CELL` JS constant — keep them in sync)

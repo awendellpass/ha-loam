@@ -8,40 +8,11 @@ from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN, BED_TYPES, PLANTING_STATUSES, MAX_GARDEN_FT
+from .const import DOMAIN, GARDEN_TYPES, PLANTING_STATUSES, MAX_GARDEN_FT
 
 
 def _db(request: web.Request):
     return request.app["hass"].data[DOMAIN]["db"]
-
-
-def _as_dim(value: Any, label: str) -> tuple[int | None, str | None]:
-    """Coerce a value to a positive integer within garden bounds."""
-    try:
-        n = int(value)
-    except (TypeError, ValueError):
-        return None, f"{label} must be a whole number"
-    if n < 1 or n > MAX_GARDEN_FT:
-        return None, f"{label} must be between 1 and {MAX_GARDEN_FT}"
-    return n, None
-
-
-def _bed_coords(body: dict) -> tuple[dict | None, str | None]:
-    """Validate a bed's grid footprint: origin >= 0, size >= 1, within bounds."""
-    try:
-        x = int(body["grid_x"])
-        y = int(body["grid_y"])
-        w = int(body["grid_w"])
-        h = int(body["grid_h"])
-    except (KeyError, TypeError, ValueError):
-        return None, "grid_x, grid_y, grid_w, grid_h are required"
-    if x < 0 or y < 0:
-        return None, "grid_x and grid_y must be 0 or greater"
-    if w < 1 or h < 1:
-        return None, "grid_w and grid_h must be at least 1"
-    if x + w > MAX_GARDEN_FT or y + h > MAX_GARDEN_FT:
-        return None, "bed extends beyond the maximum garden size"
-    return {"grid_x": x, "grid_y": y, "grid_w": w, "grid_h": h}, None
 
 
 def _json(data: Any, status: int = 200) -> web.Response:
@@ -56,11 +27,20 @@ def _error(message: str, status: int = 400) -> web.Response:
     return _json({"error": message}, status)
 
 
+def _as_dim(value: Any, label: str) -> tuple[int | None, str | None]:
+    """Coerce a value to a positive integer within garden bounds."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None, f"{label} must be a whole number"
+    if n < 1 or n > MAX_GARDEN_FT:
+        return None, f"{label} must be between 1 and {MAX_GARDEN_FT}"
+    return n, None
+
+
 def async_setup_views(hass: HomeAssistant) -> None:
     hass.http.register_view(LoamGardenView)
     hass.http.register_view(LoamGardenDetailView)
-    hass.http.register_view(LoamBedsView)
-    hass.http.register_view(LoamBedDetailView)
     hass.http.register_view(LoamPlantsView)
     hass.http.register_view(LoamPlantSearchView)
     hass.http.register_view(LoamPlantDetailView)
@@ -70,7 +50,7 @@ def async_setup_views(hass: HomeAssistant) -> None:
 
 # ---------------------------------------------------------------------------
 # GET /api/loam/garden        — list all gardens
-# POST /api/loam/garden       — create a garden
+# POST /api/loam/garden       — create a garden (name, type, width_ft, height_ft)
 # ---------------------------------------------------------------------------
 
 class LoamGardenView(HomeAssistantView):
@@ -93,6 +73,10 @@ class LoamGardenView(HomeAssistantView):
         if not name:
             return _error("name is required")
 
+        garden_type = body.get("type", "raised_bed")
+        if garden_type not in GARDEN_TYPES:
+            return _error(f"type must be one of: {', '.join(GARDEN_TYPES)}")
+
         width_ft, err = _as_dim(body.get("width_ft"), "width_ft")
         if err:
             return _error(err)
@@ -104,6 +88,7 @@ class LoamGardenView(HomeAssistantView):
         garden = await request.app["hass"].async_add_executor_job(
             db.create_garden,
             name,
+            garden_type,
             width_ft,
             height_ft,
         )
@@ -111,7 +96,8 @@ class LoamGardenView(HomeAssistantView):
 
 
 # ---------------------------------------------------------------------------
-# PUT /api/loam/garden/{garden_id}   — update garden (name, width_ft, height_ft)
+# PUT    /api/loam/garden/{garden_id}   — update (name, type, width_ft, height_ft)
+# DELETE /api/loam/garden/{garden_id}
 # ---------------------------------------------------------------------------
 
 class LoamGardenDetailView(HomeAssistantView):
@@ -130,6 +116,10 @@ class LoamGardenDetailView(HomeAssistantView):
         except Exception:
             return _error("Invalid JSON")
 
+        garden_type = body.get("type")
+        if garden_type is not None and garden_type not in GARDEN_TYPES:
+            return _error(f"type must be one of: {', '.join(GARDEN_TYPES)}")
+
         width_ft = height_ft = None
         if body.get("width_ft") is not None:
             width_ft, err = _as_dim(body.get("width_ft"), "width_ft")
@@ -145,6 +135,7 @@ class LoamGardenDetailView(HomeAssistantView):
             db.update_garden,
             gid,
             body.get("name"),
+            garden_type,
             width_ft,
             height_ft,
         )
@@ -152,119 +143,16 @@ class LoamGardenDetailView(HomeAssistantView):
             return _error("Garden not found", 404)
         return _json(garden)
 
-
-# ---------------------------------------------------------------------------
-# GET  /api/loam/beds          — list beds (optional ?garden_id=)
-# POST /api/loam/beds          — create a bed
-# ---------------------------------------------------------------------------
-
-class LoamBedsView(HomeAssistantView):
-    url = "/api/loam/beds"
-    name = "api:loam:beds"
-    requires_auth = True
-
-    async def get(self, request: web.Request) -> web.Response:
-        db = _db(request)
-        garden_id = request.rel_url.query.get("garden_id")
-        gid = int(garden_id) if garden_id and garden_id.isdigit() else None
-        beds = await request.app["hass"].async_add_executor_job(db.get_beds, gid)
-        return _json(beds)
-
-    async def post(self, request: web.Request) -> web.Response:
+    async def delete(self, request: web.Request, garden_id: str) -> web.Response:
         try:
-            body = await request.json()
-        except Exception:
-            return _error("Invalid JSON")
-
-        garden_id = body.get("garden_id")
-        name = (body.get("name") or "").strip()
-        bed_type = body.get("type", "raised_bed")
-
-        if not garden_id:
-            return _error("garden_id is required")
-        if not name:
-            return _error("name is required")
-        if bed_type not in BED_TYPES:
-            return _error(f"type must be one of: {', '.join(BED_TYPES)}")
-
-        coords, err = _bed_coords(body)
-        if err:
-            return _error(err)
-
-        db = _db(request)
-        bed = await request.app["hass"].async_add_executor_job(
-            db.create_bed,
-            int(garden_id),
-            name,
-            bed_type,
-            coords["grid_x"],
-            coords["grid_y"],
-            coords["grid_w"],
-            coords["grid_h"],
-            body.get("notes"),
-        )
-        return _json(bed, 201)
-
-
-# ---------------------------------------------------------------------------
-# PUT    /api/loam/beds/{bed_id}
-# DELETE /api/loam/beds/{bed_id}
-# ---------------------------------------------------------------------------
-
-class LoamBedDetailView(HomeAssistantView):
-    url = "/api/loam/beds/{bed_id}"
-    name = "api:loam:bed_detail"
-    requires_auth = True
-
-    async def put(self, request: web.Request, bed_id: str) -> web.Response:
-        try:
-            bid = int(bed_id)
+            gid = int(garden_id)
         except ValueError:
-            return _error("Invalid bed_id")
-
-        try:
-            body = await request.json()
-        except Exception:
-            return _error("Invalid JSON")
-
-        bed_type = body.get("type")
-        if bed_type is not None and bed_type not in BED_TYPES:
-            return _error(f"type must be one of: {', '.join(BED_TYPES)}")
-
-        # Grid coords are optional on update, but if any are sent, all must be valid.
-        grid = {"grid_x": None, "grid_y": None, "grid_w": None, "grid_h": None}
-        if any(body.get(k) is not None for k in grid):
-            coords, err = _bed_coords(body)
-            if err:
-                return _error(err)
-            grid = coords
+            return _error("Invalid garden_id")
 
         db = _db(request)
-        bed = await request.app["hass"].async_add_executor_job(
-            db.update_bed,
-            bid,
-            body.get("name"),
-            bed_type,
-            grid["grid_x"],
-            grid["grid_y"],
-            grid["grid_w"],
-            grid["grid_h"],
-            body.get("notes"),
-        )
-        if bed is None:
-            return _error("Bed not found", 404)
-        return _json(bed)
-
-    async def delete(self, request: web.Request, bed_id: str) -> web.Response:
-        try:
-            bid = int(bed_id)
-        except ValueError:
-            return _error("Invalid bed_id")
-
-        db = _db(request)
-        success = await request.app["hass"].async_add_executor_job(db.delete_bed, bid)
+        success = await request.app["hass"].async_add_executor_job(db.delete_garden, gid)
         if not success:
-            return _error("Bed not found", 404)
+            return _error("Garden not found", 404)
         return _json({"ok": True})
 
 
@@ -350,7 +238,7 @@ class LoamPlantDetailView(HomeAssistantView):
 
 
 # ---------------------------------------------------------------------------
-# GET  /api/loam/plantings     — list plantings (optional ?bed_id= &status=)
+# GET  /api/loam/plantings     — list plantings (optional ?garden_id= &status=)
 # POST /api/loam/plantings     — log a planting
 # ---------------------------------------------------------------------------
 
@@ -361,10 +249,10 @@ class LoamPlantingsView(HomeAssistantView):
 
     async def get(self, request: web.Request) -> web.Response:
         db = _db(request)
-        bed_id = request.rel_url.query.get("bed_id")
+        garden_id = request.rel_url.query.get("garden_id")
         status = request.rel_url.query.get("status")
-        bid = int(bed_id) if bed_id and bed_id.isdigit() else None
-        plantings = await request.app["hass"].async_add_executor_job(db.get_plantings, bid, status)
+        gid = int(garden_id) if garden_id and garden_id.isdigit() else None
+        plantings = await request.app["hass"].async_add_executor_job(db.get_plantings, gid, status)
         return _json(plantings)
 
     async def post(self, request: web.Request) -> web.Response:
@@ -373,12 +261,12 @@ class LoamPlantingsView(HomeAssistantView):
         except Exception:
             return _error("Invalid JSON")
 
-        bed_id = body.get("bed_id")
+        garden_id = body.get("garden_id")
         plant_id = body.get("plant_id")
         planted_date = (body.get("planted_date") or "").strip()
 
-        if not bed_id:
-            return _error("bed_id is required")
+        if not garden_id:
+            return _error("garden_id is required")
         if not plant_id:
             return _error("plant_id is required")
         if not planted_date:
@@ -387,7 +275,7 @@ class LoamPlantingsView(HomeAssistantView):
         db = _db(request)
         planting = await request.app["hass"].async_add_executor_job(
             db.create_planting,
-            int(bed_id),
+            int(garden_id),
             int(plant_id),
             planted_date,
             body.get("quantity"),

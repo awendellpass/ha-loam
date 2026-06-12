@@ -21,11 +21,8 @@
   const state = {
     gardens: [],
     activeGardenId: null,
-    beds: [],
     plants: [],
     plantings: [],
-    drawing: false,
-    selectedBedId: null,
   };
 
   const activeGarden = () => state.gardens.find(g => g.id === state.activeGardenId);
@@ -70,7 +67,7 @@
     });
   });
 
-  // ── Grid elements ──────────────────────────────────────────────────────────
+  // ── Grid ─────────────────────────────────────────────────────────────────────
   const canvas = document.getElementById("grid-canvas");
   const gridEmpty = document.getElementById("grid-empty");
 
@@ -83,156 +80,103 @@
     }
     gridEmpty.style.display = "none";
     canvas.style.display = "block";
-
     const w = g.width_ft || 1;
     const h = g.height_ft || 1;
     canvas.style.width = (w * CELL) + "px";
     canvas.style.height = (h * CELL) + "px";
-
+    // Grid lines are drawn via the CSS background. Per-cell plant placement
+    // will render here in a future iteration.
     canvas.innerHTML = "";
-    state.beds.forEach(bed => {
-      if (bed.grid_w == null || bed.grid_h == null) return; // skip beds with no footprint
-      const div = document.createElement("div");
-      div.className = "bed-rect" + (bed.id === state.selectedBedId ? " selected" : "");
-      div.style.left   = (bed.grid_x * CELL) + "px";
-      div.style.top    = (bed.grid_y * CELL) + "px";
-      div.style.width  = (bed.grid_w * CELL) + "px";
-      div.style.height = (bed.grid_h * CELL) + "px";
-      div.innerHTML = `<span class="bed-rect-label">${escapeHtml(bed.name)}</span>`;
-      div.addEventListener("click", e => {
-        if (state.drawing) return;
-        e.stopPropagation();
-        selectBed(bed.id);
-      });
-      canvas.appendChild(div);
-    });
   }
 
-  // ── Bed drawing (snap to 1-ft cells) ─────────────────────────────────────────
-  let dragStart = null;
-  let selRect = null;
-  let pendingBed = null;
-
-  function cellFromEvent(e) {
-    const g = activeGarden();
-    const r = canvas.getBoundingClientRect();
-    let cx = Math.floor((e.clientX - r.left) / CELL);
-    let cy = Math.floor((e.clientY - r.top) / CELL);
-    cx = Math.max(0, Math.min(cx, g.width_ft - 1));
-    cy = Math.max(0, Math.min(cy, g.height_ft - 1));
-    return { cx, cy };
-  }
-
-  function normalizeCells(sx, sy, ex, ey) {
-    return {
-      grid_x: Math.min(sx, ex),
-      grid_y: Math.min(sy, ey),
-      grid_w: Math.abs(ex - sx) + 1,
-      grid_h: Math.abs(ey - sy) + 1,
-    };
-  }
-
-  function paintSelection(rect) {
-    if (!selRect) return;
-    selRect.style.left   = (rect.grid_x * CELL) + "px";
-    selRect.style.top    = (rect.grid_y * CELL) + "px";
-    selRect.style.width  = (rect.grid_w * CELL) + "px";
-    selRect.style.height = (rect.grid_h * CELL) + "px";
-  }
-
-  function rectsOverlap(a, b) {
-    return a.grid_x < b.grid_x + b.grid_w &&
-           a.grid_x + a.grid_w > b.grid_x &&
-           a.grid_y < b.grid_y + b.grid_h &&
-           a.grid_y + a.grid_h > b.grid_y;
-  }
-
-  canvas.addEventListener("mousedown", e => {
-    if (!state.drawing) return;
-    e.preventDefault();
-    const { cx, cy } = cellFromEvent(e);
-    dragStart = { cx, cy };
-    selRect = document.createElement("div");
-    selRect.className = "draw-selection";
-    canvas.appendChild(selRect);
-    paintSelection(normalizeCells(cx, cy, cx, cy));
-  });
-
-  canvas.addEventListener("mousemove", e => {
-    if (!state.drawing || !dragStart) return;
-    const { cx, cy } = cellFromEvent(e);
-    paintSelection(normalizeCells(dragStart.cx, dragStart.cy, cx, cy));
-  });
-
-  window.addEventListener("mouseup", e => {
-    if (!state.drawing || !dragStart) return;
-    const { cx, cy } = cellFromEvent(e);
-    const rect = normalizeCells(dragStart.cx, dragStart.cy, cx, cy);
-    dragStart = null;
-    if (selRect) { selRect.remove(); selRect = null; }
-
-    if (state.beds.some(b => b.grid_w != null && rectsOverlap(rect, b))) {
-      alert("Beds can't overlap. Try a different spot.");
-      return;
-    }
-    pendingBed = rect;
-    showBedForm(rect);
-  });
-
-  function enterDrawMode() {
-    if (!state.activeGardenId) return;
-    state.drawing = true;
-    canvas.classList.add("drawing");
-    document.getElementById("btn-add-bed").textContent = "Cancel";
-  }
-
-  function exitDrawMode() {
-    state.drawing = false;
-    canvas.classList.remove("drawing");
-    if (selRect) { selRect.remove(); selRect = null; }
-    dragStart = null;
-    document.getElementById("btn-add-bed").textContent = "+ Bed";
-  }
-
-  // ── Garden selector ──────────────────────────────────────────────────────────
+  // ── Gardens ──────────────────────────────────────────────────────────────────
   async function loadGardens() {
     state.gardens = await get("/garden");
-    const sel = document.getElementById("garden-select");
-    const prev = state.activeGardenId;
-    sel.innerHTML = '<option value="">— select garden —</option>' +
-      state.gardens.map(g => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join("");
-    if (prev && state.gardens.find(g => g.id === prev)) sel.value = prev;
+    if (state.activeGardenId && !state.gardens.find(g => g.id === state.activeGardenId)) {
+      state.activeGardenId = null;
+    }
+    renderGardensList();
     populatePlantingGardenDropdowns();
   }
 
-  document.getElementById("garden-select").addEventListener("change", async e => {
-    const id = parseInt(e.target.value, 10);
-    state.activeGardenId = id || null;
-    state.selectedBedId = null;
-    exitDrawMode();
-    document.getElementById("btn-add-bed").style.display = id ? "inline-block" : "none";
-    await loadBeds();
-  });
+  function renderGardensList() {
+    const el = document.getElementById("gardens-list");
+    if (!state.gardens.length) {
+      el.innerHTML = '<div class="empty-state">No gardens yet.<br/>Click “+ New” to create one.</div>';
+      return;
+    }
+    el.innerHTML = state.gardens.map(g => {
+      const typeLabel = g.type.replace("_", " ");
+      const size = (g.width_ft != null && g.height_ft != null)
+        ? `${g.width_ft}×${g.height_ft} ft · ` : "";
+      const sel = g.id === state.activeGardenId ? " selected" : "";
+      return `
+        <div class="garden-card${sel}" data-garden-id="${g.id}">
+          <div class="garden-card-header">
+            <span class="garden-name">${escapeHtml(g.name)}</span>
+            <span class="type-badge ${g.type}">${typeLabel}</span>
+          </div>
+          <div class="garden-meta">${size}${g.planting_count} active planting${g.planting_count !== 1 ? "s" : ""}</div>
+          <div class="planting-actions">
+            <button class="btn btn-danger btn-sm" data-delete-garden="${g.id}">Delete</button>
+          </div>
+        </div>`;
+    }).join("");
+
+    el.querySelectorAll(".garden-card").forEach(card => {
+      card.addEventListener("click", e => {
+        if (e.target.closest("[data-delete-garden]")) return;
+        selectGarden(parseInt(card.dataset.gardenId, 10));
+      });
+    });
+
+    el.querySelectorAll("[data-delete-garden]").forEach(btn => {
+      btn.addEventListener("click", async e => {
+        e.stopPropagation();
+        if (!confirm("Delete this garden? Its plantings will be removed too.")) return;
+        const id = parseInt(btn.dataset.deleteGarden, 10);
+        await del(`/garden/${id}`).catch(err => alert(err.message));
+        if (state.activeGardenId === id) state.activeGardenId = null;
+        await loadGardens();
+        renderGrid();
+      });
+    });
+  }
+
+  function selectGarden(id) {
+    state.activeGardenId = id;
+    renderGardensList();
+    renderGrid();
+  }
 
   document.getElementById("btn-new-garden").addEventListener("click", showGardenForm);
 
   function showGardenForm() {
-    const list = document.getElementById("beds-list");
+    const list = document.getElementById("gardens-list");
     if (document.getElementById("new-garden-form")) return;
     list.insertAdjacentHTML("afterbegin", `
-      <div class="bed-form" id="new-garden-form">
+      <div class="form-card" id="new-garden-form">
         <h3>New garden</h3>
         <div class="form-group">
           <label>Name</label>
-          <input type="text" id="ng-name" placeholder="e.g. Backyard" />
+          <input type="text" id="ng-name" placeholder="e.g. South Raised Bed" />
+        </div>
+        <div class="form-group">
+          <label>Type</label>
+          <select id="ng-type">
+            <option value="raised_bed">Raised Bed</option>
+            <option value="in_ground">In Ground</option>
+            <option value="container">Container</option>
+            <option value="grow_bag">Grow Bag</option>
+          </select>
         </div>
         <div class="form-group">
           <label>Width (feet)</label>
-          <input type="number" id="ng-width" min="1" max="200" value="20" />
+          <input type="number" id="ng-width" min="1" max="200" value="4" />
         </div>
         <div class="form-group">
           <label>Height (feet)</label>
-          <input type="number" id="ng-height" min="1" max="200" value="20" />
+          <input type="number" id="ng-height" min="1" max="200" value="8" />
         </div>
         <div style="display:flex;gap:8px">
           <button class="btn btn-primary btn-sm" id="ng-save">Create</button>
@@ -243,13 +187,14 @@
     document.getElementById("ng-save").addEventListener("click", saveNewGarden);
     document.getElementById("ng-cancel").addEventListener("click", () => {
       document.getElementById("new-garden-form").remove();
-      renderBedList();
+      renderGardensList();
     });
     document.getElementById("ng-name").focus();
   }
 
   async function saveNewGarden() {
     const name = document.getElementById("ng-name").value.trim();
+    const type = document.getElementById("ng-type").value;
     const w = parseInt(document.getElementById("ng-width").value, 10);
     const h = parseInt(document.getElementById("ng-height").value, 10);
     if (!name) { alert("Name is required."); return; }
@@ -258,147 +203,10 @@
       return;
     }
     try {
-      const g = await post("/garden", { name, width_ft: w, height_ft: h });
+      const g = await post("/garden", { name, type, width_ft: w, height_ft: h });
       state.activeGardenId = g.id;
-      state.selectedBedId = null;
       await loadGardens();
-      document.getElementById("garden-select").value = g.id;
-      document.getElementById("btn-add-bed").style.display = "inline-block";
-      await loadBeds();
-    } catch (err) {
-      alert("Error: " + err.message);
-    }
-  }
-
-  // ── Beds ─────────────────────────────────────────────────────────────────────
-  async function loadBeds() {
-    if (state.activeGardenId) {
-      state.beds = await get(`/beds?garden_id=${state.activeGardenId}`);
-    } else {
-      state.beds = [];
-    }
-    renderBedList();
-    renderGrid();
-  }
-
-  function renderBedList() {
-    const el = document.getElementById("beds-list");
-    if (!state.activeGardenId) { el.innerHTML = ""; return; }
-    if (!state.beds.length) {
-      el.innerHTML = '<div class="empty-state">No beds yet.<br/>Click “+ Bed”, then drag on the grid to draw one.</div>';
-      return;
-    }
-    el.innerHTML =
-      '<div class="grid-hint">Each square is 1 ft. Click “+ Bed”, then drag across the grid to lay one out.</div>' +
-      state.beds.map(bed => {
-        const typeLabel = bed.type.replace("_", " ");
-        const size = (bed.grid_w != null && bed.grid_h != null)
-          ? `${bed.grid_w}×${bed.grid_h} ft · ` : "";
-        const sel = bed.id === state.selectedBedId ? " selected" : "";
-        return `
-          <div class="bed-card${sel}" data-bed-id="${bed.id}">
-            <div class="bed-card-header">
-              <span class="bed-name">${escapeHtml(bed.name)}</span>
-              <span class="bed-badge ${bed.type}">${typeLabel}</span>
-            </div>
-            <div class="bed-meta">${size}${bed.planting_count} active planting${bed.planting_count !== 1 ? "s" : ""}</div>
-            <div class="planting-actions">
-              <button class="btn btn-danger btn-sm" data-delete-bed="${bed.id}">Delete</button>
-            </div>
-          </div>`;
-      }).join("");
-
-    el.querySelectorAll(".bed-card").forEach(card => {
-      card.addEventListener("click", e => {
-        if (e.target.closest("[data-delete-bed]")) return;
-        selectBed(parseInt(card.dataset.bedId, 10));
-      });
-    });
-
-    el.querySelectorAll("[data-delete-bed]").forEach(btn => {
-      btn.addEventListener("click", async e => {
-        e.stopPropagation();
-        if (!confirm("Delete this bed? Its plantings will be removed too.")) return;
-        const id = parseInt(btn.dataset.deleteBed, 10);
-        await del(`/beds/${id}`).catch(err => alert(err.message));
-        if (state.selectedBedId === id) state.selectedBedId = null;
-        await loadBeds();
-      });
-    });
-  }
-
-  function selectBed(id) {
-    state.selectedBedId = (state.selectedBedId === id) ? null : id;
-    renderGrid();
-    renderBedList();
-  }
-
-  document.getElementById("btn-add-bed").addEventListener("click", () => {
-    if (!state.activeGardenId) return;
-    if (state.drawing) exitDrawMode();
-    else enterDrawMode();
-  });
-
-  // ── Bed form (shown after drawing) ──────────────────────────────────────────
-  function showBedForm(rect) {
-    exitDrawMode();
-    const list = document.getElementById("beds-list");
-    const existing = document.getElementById("new-bed-form");
-    if (existing) existing.remove();
-    list.insertAdjacentHTML("afterbegin", `
-      <div class="bed-form" id="new-bed-form">
-        <h3>New bed · ${rect.grid_w} × ${rect.grid_h} ft</h3>
-        <div class="form-group">
-          <label>Name</label>
-          <input type="text" id="new-bed-name" placeholder="e.g. South Raised Bed" />
-        </div>
-        <div class="form-group">
-          <label>Type</label>
-          <select id="new-bed-type">
-            <option value="raised_bed">Raised Bed</option>
-            <option value="in_ground">In Ground</option>
-            <option value="container">Container</option>
-            <option value="grow_bag">Grow Bag</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Notes (optional)</label>
-          <textarea id="new-bed-notes"></textarea>
-        </div>
-        <div style="display:flex;gap:8px">
-          <button class="btn btn-primary btn-sm" id="btn-save-bed">Save</button>
-          <button class="btn btn-ghost btn-sm" id="btn-cancel-bed">Cancel</button>
-        </div>
-      </div>
-    `);
-
-    document.getElementById("btn-save-bed").addEventListener("click", () => saveNewBed(rect));
-    document.getElementById("btn-cancel-bed").addEventListener("click", () => {
-      pendingBed = null;
-      renderBedList();
-    });
-    document.getElementById("new-bed-name").focus();
-  }
-
-  async function saveNewBed(rect) {
-    const name = document.getElementById("new-bed-name").value.trim();
-    if (!name) { alert("Name is required."); return; }
-    const bedType = document.getElementById("new-bed-type").value;
-    const notes = document.getElementById("new-bed-notes").value.trim();
-
-    try {
-      await post("/beds", {
-        garden_id: state.activeGardenId,
-        name,
-        type: bedType,
-        grid_x: rect.grid_x,
-        grid_y: rect.grid_y,
-        grid_w: rect.grid_w,
-        grid_h: rect.grid_h,
-        notes: notes || null,
-      });
-      pendingBed = null;
-      await loadBeds();
+      renderGrid();
     } catch (e) {
       alert("Error: " + e.message);
     }
@@ -499,7 +307,7 @@
   document.getElementById("btn-custom-plant").addEventListener("click", () => {
     const el = document.getElementById("search-results");
     el.innerHTML = `
-      <div class="bed-form">
+      <div class="form-card">
         <h3>Add Custom Plant</h3>
         <div class="form-group"><label>Name *</label><input type="text" id="custom-name" /></div>
         <div class="form-group"><label>Sun requirements</label><input type="text" id="custom-sun" placeholder="e.g. Full sun" /></div>
@@ -573,32 +381,20 @@
       state.plants.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
   }
 
-  document.getElementById("planting-garden-select").addEventListener("change", async e => {
-    const gid = parseInt(e.target.value) || null;
-    const bedSel = document.getElementById("planting-bed-select");
-    if (!gid) {
-      bedSel.innerHTML = '<option value="">— select garden first —</option>';
-      return;
-    }
-    const beds = await get(`/beds?garden_id=${gid}`);
-    bedSel.innerHTML = '<option value="">— select bed —</option>' +
-      beds.map(b => `<option value="${b.id}">${b.name}</option>`).join("");
-  });
-
   document.getElementById("btn-log-planting").addEventListener("click", async () => {
-    const bedId = document.getElementById("planting-bed-select").value;
+    const gardenId = document.getElementById("planting-garden-select").value;
     const plantId = document.getElementById("planting-plant-select").value;
     const date = document.getElementById("planting-date").value;
     const qty = document.getElementById("planting-quantity").value;
     const notes = document.getElementById("planting-notes").value.trim();
 
-    if (!bedId) { alert("Select a bed."); return; }
+    if (!gardenId) { alert("Select a garden."); return; }
     if (!plantId) { alert("Select a plant."); return; }
     if (!date) { alert("Enter the date planted."); return; }
 
     try {
       await post("/plantings", {
-        bed_id: parseInt(bedId),
+        garden_id: parseInt(gardenId),
         plant_id: parseInt(plantId),
         planted_date: date,
         quantity: qty ? parseInt(qty) : null,
@@ -606,7 +402,6 @@
       });
 
       // Reset form fields
-      document.getElementById("planting-bed-select").innerHTML = '<option value="">— select garden first —</option>';
       document.getElementById("planting-garden-select").value = "";
       document.getElementById("planting-plant-select").value = "";
       document.getElementById("planting-date").value = "";
@@ -635,16 +430,16 @@
       return;
     }
 
-    // Group by bed
-    const byBed = {};
+    // Group by garden
+    const byGarden = {};
     items.forEach(p => {
-      const key = `${p.bed_id}`;
-      if (!byBed[key]) byBed[key] = { bedName: p.bed_name, items: [] };
-      byBed[key].items.push(p);
+      const key = `${p.garden_id}`;
+      if (!byGarden[key]) byGarden[key] = { gardenName: p.garden_name, items: [] };
+      byGarden[key].items.push(p);
     });
 
-    el.innerHTML = Object.values(byBed).map(group => `
-      <div class="section-label">${group.bedName}</div>
+    el.innerHTML = Object.values(byGarden).map(group => `
+      <div class="section-label">${group.gardenName}</div>
       ${group.items.map(p => `
         <div class="planting-card">
           <div class="planting-card-header">
@@ -693,14 +488,10 @@
 
     // If there's exactly one garden, auto-select it
     if (state.gardens.length === 1) {
-      const g = state.gardens[0];
-      state.activeGardenId = g.id;
-      document.getElementById("garden-select").value = g.id;
-      document.getElementById("btn-add-bed").style.display = "inline-block";
-      await loadBeds();
-    } else {
-      renderGrid();
+      state.activeGardenId = state.gardens[0].id;
+      renderGardensList();
     }
+    renderGrid();
   }
 
 })();

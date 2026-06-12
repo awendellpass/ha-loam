@@ -1,12 +1,12 @@
 # Loam — Home Assistant Garden Manager
 
-A Home Assistant custom integration for managing outdoor gardens. A grid-based layout interface for drawing garden beds to scale, building a plant library, and logging plantings.
+A Home Assistant custom integration for managing outdoor gardens. Each garden is drawn to scale on a 1-foot grid, with a plant library and a planting log.
 
 ## Features
 
-- **Grid layout** — Lay out beds to scale on a per-garden grid where each square is 1 square foot
-- **Multiple gardens** — Manage separate garden spaces, each with its own dimensions, from one panel
-- **Bed types** — Raised bed, in-ground, container, grow bag
+- **Grid layout** — Each garden is a to-scale grid where every square is 1 square foot
+- **Multiple gardens** — Manage separate gardens, each with its own size and type, from one panel
+- **Garden types** — Raised bed, in-ground, container, grow bag
 - **Plant library** — Live search via OpenFarm API (free, no key required); save plants locally or add custom entries
 - **Planting log** — Record what was planted, when, and where; mark harvested or removed
 

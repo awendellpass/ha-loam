@@ -14,7 +14,8 @@ try:
 except ImportError:
     TOMORROW_API_KEY = ""
 
-BED_TYPES = ["raised_bed", "in_ground", "container", "grow_bag"]
+# Garden types (a garden is the single grid element plants are placed into).
+GARDEN_TYPES = ["raised_bed", "in_ground", "container", "grow_bag"]
 
 PLANTING_STATUSES = ["active", "harvested", "removed"]
 

@@ -118,46 +118,6 @@
       border-bottom: 1px solid var(--grid-major);
     }
 
-    #grid-canvas.drawing { cursor: crosshair; }
-
-    .bed-rect {
-      position: absolute;
-      background: rgba(76, 175, 80, 0.22);
-      border: 1.5px solid var(--accent);
-      border-radius: 3px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
-      cursor: pointer;
-      transition: background 0.15s, border-color 0.15s;
-    }
-
-    .bed-rect:hover,
-    .bed-rect.selected {
-      background: rgba(102, 187, 106, 0.34);
-      border-color: var(--accent-hover);
-    }
-
-    .bed-rect-label {
-      font-size: 11px;
-      font-weight: 600;
-      color: #fff;
-      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
-      padding: 2px 4px;
-      text-align: center;
-      pointer-events: none;
-    }
-
-    .draw-selection {
-      position: absolute;
-      background: rgba(102, 187, 106, 0.25);
-      border: 1.5px dashed var(--accent-hover);
-      border-radius: 3px;
-      pointer-events: none;
-      z-index: 5;
-    }
-
     .garden-sidebar {
       width: 300px;
       background: var(--surface);
@@ -188,28 +148,8 @@
       padding: 12px;
     }
 
-    /* ── Garden selector ── */
-    .garden-select-row {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--border);
-      flex-shrink: 0;
-    }
-
-    .garden-select-row select {
-      flex: 1;
-      background: var(--surface2);
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      padding: 6px 8px;
-      font-size: 13px;
-    }
-
-    /* ── Bed cards ── */
-    .bed-card {
+    /* ── Garden cards ── */
+    .garden-card {
       background: var(--surface2);
       border-radius: 8px;
       padding: 12px;
@@ -219,12 +159,12 @@
       transition: border-color 0.2s;
     }
 
-    .bed-card:hover,
-    .bed-card.selected {
+    .garden-card:hover,
+    .garden-card.selected {
       border-color: var(--accent);
     }
 
-    .bed-card-header {
+    .garden-card-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -232,12 +172,12 @@
       margin-bottom: 6px;
     }
 
-    .bed-name {
+    .garden-name {
       font-size: 14px;
       font-weight: 600;
     }
 
-    .bed-badge {
+    .type-badge {
       font-size: 10px;
       font-weight: 600;
       padding: 2px 7px;
@@ -246,18 +186,18 @@
       letter-spacing: 0.5px;
     }
 
-    .bed-badge.raised_bed   { background: var(--badge-raised);    color: #fff; }
-    .bed-badge.in_ground    { background: var(--badge-inground);  color: #fff; }
-    .bed-badge.container    { background: var(--badge-container); color: #fff; }
-    .bed-badge.grow_bag     { background: var(--badge-growbag);   color: #fff; }
+    .type-badge.raised_bed   { background: var(--badge-raised);    color: #fff; }
+    .type-badge.in_ground    { background: var(--badge-inground);  color: #fff; }
+    .type-badge.container    { background: var(--badge-container); color: #fff; }
+    .type-badge.grow_bag     { background: var(--badge-growbag);   color: #fff; }
 
-    .bed-meta {
+    .garden-meta {
       font-size: 12px;
       color: var(--text-muted);
     }
 
-    /* ── Bed form ── */
-    .bed-form {
+    /* ── Inline form card (new garden, custom plant) ── */
+    .form-card {
       background: var(--surface2);
       border-radius: 8px;
       padding: 14px;
@@ -265,7 +205,7 @@
       border: 1px solid var(--accent);
     }
 
-    .bed-form h3 {
+    .form-card h3 {
       font-size: 13px;
       font-weight: 600;
       margin-bottom: 12px;
@@ -554,18 +494,14 @@
   <div id="tab-garden" class="tab-content active">
     <div id="grid-viewport">
       <div id="grid-canvas" style="display:none"></div>
-      <div id="grid-empty">Select or create a garden to lay out beds.</div>
+      <div id="grid-empty">Select or create a garden to see its grid.</div>
     </div>
     <div class="garden-sidebar">
-      <div class="garden-select-row">
-        <select id="garden-select"><option value="">— select garden —</option></select>
+      <div class="sidebar-header">
+        <h2>Gardens</h2>
         <button class="btn btn-primary btn-sm" id="btn-new-garden">+ New</button>
       </div>
-      <div class="sidebar-header">
-        <h2>Beds</h2>
-        <button class="btn btn-primary btn-sm" id="btn-add-bed" style="display:none">+ Bed</button>
-      </div>
-      <div class="sidebar-scroll" id="beds-list"></div>
+      <div class="sidebar-scroll" id="gardens-list"></div>
     </div>
   </div>
 
@@ -599,10 +535,6 @@
         <div class="form-group">
           <label>Garden</label>
           <select id="planting-garden-select"><option value="">— select —</option></select>
-        </div>
-        <div class="form-group">
-          <label>Bed</label>
-          <select id="planting-bed-select"><option value="">— select garden first —</option></select>
         </div>
         <div class="form-group">
           <label>Plant</label>
