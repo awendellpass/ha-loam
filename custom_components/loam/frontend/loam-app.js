@@ -23,6 +23,7 @@
     activeGardenId: null,
     plants: [],
     plantings: [],
+    searchResults: [],       // latest plant-search results (saved by index, not via DOM attrs)
     placements: [],          // cell plant assignments for the active garden
     brush: "",               // "" (none), "erase", or a plant id (string)
     copyMode: false,         // next click picks up a cell's plant as the brush
@@ -418,12 +419,12 @@
       <div class="plant-card">
         <div class="plant-card-header">
           <div>
-            <div class="plant-card-name">${p.name}</div>
-            <div class="plant-card-meta">${p.sun_requirements || ""}${p.days_to_maturity_min ? ` · ${p.days_to_maturity_min} days` : ""}</div>
+            <div class="plant-card-name">${escapeHtml(p.name)}</div>
+            <div class="plant-card-meta">${escapeHtml(p.sun_requirements || "")}${p.days_to_maturity_min ? ` · ${p.days_to_maturity_min} days` : ""}</div>
           </div>
           <button class="btn btn-danger btn-sm" data-delete-plant="${p.id}">✕</button>
         </div>
-        ${p.description ? `<div class="plant-card-meta" style="margin-top:6px">${p.description}</div>` : ""}
+        ${p.description ? `<div class="plant-card-meta" style="margin-top:6px">${escapeHtml(p.description)}</div>` : ""}
         ${p.is_custom ? '<div class="plant-card-meta" style="color:#66bb6a;margin-top:4px">Custom</div>' : ""}
       </div>
     `).join("");
@@ -455,22 +456,24 @@
         el.innerHTML = '<div class="empty-state">No results found.</div>';
         return;
       }
-      el.innerHTML = results.map(p => `
+      state.searchResults = results;
+      el.innerHTML = results.map((p, i) => `
         <div class="plant-card">
           <div class="plant-card-header">
             <div>
-              <div class="plant-card-name">${p.name}</div>
-              <div class="plant-card-meta">${p.sun_requirements || ""}${p.days_to_maturity_min ? ` · ${p.days_to_maturity_min} days` : ""}</div>
+              <div class="plant-card-name">${escapeHtml(p.name)}</div>
+              <div class="plant-card-meta">${escapeHtml(p.sun_requirements || "")}${p.days_to_maturity_min ? ` · ${p.days_to_maturity_min} days` : ""}</div>
             </div>
-            <button class="btn btn-primary btn-sm" data-save-plant='${JSON.stringify(p)}'>+ Save</button>
+            <button class="btn btn-primary btn-sm" data-save-idx="${i}">+ Save</button>
           </div>
-          ${p.description ? `<div class="plant-card-meta" style="margin-top:6px">${p.description.substring(0, 120)}…</div>` : ""}
+          ${p.description ? `<div class="plant-card-meta" style="margin-top:6px">${escapeHtml(p.description.substring(0, 120))}…</div>` : ""}
         </div>
       `).join("");
 
-      el.querySelectorAll("[data-save-plant]").forEach(btn => {
+      el.querySelectorAll("[data-save-idx]").forEach(btn => {
         btn.addEventListener("click", async () => {
-          const plantData = JSON.parse(btn.dataset.savePlant);
+          const plantData = state.searchResults[parseInt(btn.dataset.saveIdx, 10)];
+          if (!plantData) return;
           btn.textContent = "Saving…";
           btn.disabled = true;
           try {
@@ -568,7 +571,7 @@
     const sel = document.getElementById("planting-plant-select");
     if (!sel) return;
     sel.innerHTML = '<option value="">— select —</option>' +
-      state.plants.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
+      state.plants.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join("");
   }
 
   document.getElementById("btn-log-planting").addEventListener("click", async () => {
