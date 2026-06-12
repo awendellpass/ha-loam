@@ -57,7 +57,7 @@ PUT/DELETE /api/loam/plantings/{id}
 ## UI — 3 Tabs
 
 - **Garden:** Sidebar lists gardens (name, type badge, W×H ft, planting count) with **+ New** and per-card **Delete**. Selecting a garden renders its to-scale grid (1 square = 1 ft). A toolbar holds a **brush** (pick a plant, or "Erase") plus **Copy from square** (click a planted cell to load its plant as the brush). Click or drag squares to plant/clear; changes batch-save on mouse-up via `/placements`. Creating a garden is a form: name, type, width, height.
-- **Library:** Add custom plants and browse the saved library. **OpenFarm shut down**, so its live search is dead — a replacement plant database is pending (the user chose to wire up a new one; needs a free API key). Custom entries are the interim way to populate the library.
+- **Library:** Live plant search via the **Permapeople** API (`POST /api/search`, auth = `x-permapeople-key-id` + `x-permapeople-key-secret` headers), save to local library, add custom plants, browse saved. Credentials come from `configuration.yaml` → `secrets.yaml` (`permapeople_key_id`, `permapeople_key_secret`), read by `CONFIG_SCHEMA` in `__init__.py`. (Replaced OpenFarm, which shut down. Perenual was tried first but the account was actually a Permapeople one.)
 - **Plantings:** Log new planting (garden + plant + date + quantity + notes), view active plantings grouped by garden, mark harvested/removed. (Separate from the grid `placements` layer.)
 
 ## Hard Constraints

@@ -4,13 +4,15 @@ DOMAIN = "loam"
 DB_FILENAME = "loam.db"
 FRONTEND_PATH = "/loam_frontend"
 
-# Perenual plant database (replaced OpenFarm, which shut down). The API key is
-# NOT stored here — it comes from /config/secrets.yaml via configuration.yaml so
-# it stays out of version control and survives HACS updates. See CONF_* below.
-PERENUAL_API_URL = "https://perenual.com/api/v2/species-list"
+# Permapeople plant database (replaced OpenFarm, which shut down). Credentials
+# are NOT stored here — they come from /config/secrets.yaml via configuration.yaml
+# so they stay out of version control and survive HACS updates. See CONF_* below.
+# Auth is a key-id + key-secret pair sent as request headers.
+PERMAPEOPLE_API_URL = "https://permapeople.org/api/search"
 
 # configuration.yaml keys read by CONFIG_SCHEMA in __init__.py.
-CONF_PERENUAL_API_KEY = "perenual_api_key"
+CONF_PERMAPEOPLE_KEY_ID = "permapeople_key_id"
+CONF_PERMAPEOPLE_KEY_SECRET = "permapeople_key_secret"
 
 # Secrets load from an untracked secrets.py (gitignored — see secrets.py.example).
 # Real API keys never enter version control. Falls back to "" if the file is

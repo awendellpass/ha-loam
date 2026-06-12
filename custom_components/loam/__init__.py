@@ -7,17 +7,23 @@ import voluptuous as vol
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 
-from .const import CONF_PERENUAL_API_KEY, DOMAIN, FRONTEND_PATH
+from .const import (
+    CONF_PERMAPEOPLE_KEY_ID,
+    CONF_PERMAPEOPLE_KEY_SECRET,
+    DOMAIN,
+    FRONTEND_PATH,
+)
 from .database import LoamDatabase
 
-# Optional YAML config: the Perenual API key comes from /config/secrets.yaml,
-# referenced under `loam:` in configuration.yaml. Keeps the key out of the repo
-# and out of the integration folder (which HACS overwrites on update).
+# Optional YAML config: the Permapeople key-id/key-secret come from
+# /config/secrets.yaml, referenced under `loam:` in configuration.yaml. Keeps
+# credentials out of the repo and the integration folder (HACS overwrites that).
 CONFIG_SCHEMA = vol.Schema(
     {
         DOMAIN: vol.Schema(
             {
-                vol.Optional(CONF_PERENUAL_API_KEY): cv.string,
+                vol.Optional(CONF_PERMAPEOPLE_KEY_ID): cv.string,
+                vol.Optional(CONF_PERMAPEOPLE_KEY_SECRET): cv.string,
             }
         )
     },
@@ -30,13 +36,16 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
     # `config.get(DOMAIN)` is None when the YAML has a bare `loam:` line.
     conf = config.get(DOMAIN) or {}
-    perenual_api_key = conf.get(CONF_PERENUAL_API_KEY, "")
 
     db_path = hass.config.path("loam.db")
     db = LoamDatabase(db_path)
     await hass.async_add_executor_job(db.initialize)
 
-    hass.data[DOMAIN] = {"db": db, "perenual_api_key": perenual_api_key}
+    hass.data[DOMAIN] = {
+        "db": db,
+        "permapeople_key_id": conf.get(CONF_PERMAPEOPLE_KEY_ID, ""),
+        "permapeople_key_secret": conf.get(CONF_PERMAPEOPLE_KEY_SECRET, ""),
+    }
 
     frontend_dir = os.path.join(os.path.dirname(__file__), "frontend")
     try:

@@ -240,7 +240,7 @@ class LoamPlantsView(HomeAssistantView):
         if not name:
             return _error("name is required")
 
-        # Prevent duplicate saves of the same external plant (e.g. "perenual:123")
+        # Prevent duplicate saves of the same external plant (e.g. "permapeople:182")
         slug = body.get("openfarm_slug", "").strip()
         if slug:
             db = _db(request)
@@ -269,15 +269,19 @@ class LoamPlantSearchView(HomeAssistantView):
         if not query:
             return _json([])
 
-        api_key = request.app["hass"].data[DOMAIN].get("perenual_api_key", "")
-        if not api_key:
+        data = request.app["hass"].data[DOMAIN]
+        key_id = data.get("permapeople_key_id", "")
+        key_secret = data.get("permapeople_key_secret", "")
+        if not key_id or not key_secret:
             return _error(
-                "Plant search isn't configured. Add a Perenual API key to configuration.yaml.",
+                "Plant search isn't configured. Add Permapeople key id/secret to configuration.yaml.",
                 503,
             )
 
-        from .api import search_perenual
-        results = await request.app["hass"].async_add_executor_job(search_perenual, query, api_key)
+        from .api import search_permapeople
+        results = await request.app["hass"].async_add_executor_job(
+            search_permapeople, query, key_id, key_secret
+        )
         return _json(results)
 
 
