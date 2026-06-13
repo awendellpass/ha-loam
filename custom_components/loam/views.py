@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import logging
 from typing import Any
 
 from aiohttp import web
@@ -10,6 +11,8 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN, GARDEN_TYPES, PLANTING_STATUSES, MAX_GARDEN_FT
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _db(request: web.Request):
@@ -261,6 +264,7 @@ class LoamCompanionsView(HomeAssistantView):
                 )
             except Exception:
                 resolved = []  # degrade: show only cached relationships
+                _LOGGER.exception("Loam: companion classification failed")
             if resolved:
                 await hass.async_add_executor_job(db.save_companions, resolved)
                 for r in resolved:
@@ -309,7 +313,11 @@ class LoamPlantsView(HomeAssistantView):
         # one (Permapeople's feed has no maturity data). Stays editable afterward.
         if not body.get("days_to_maturity_min"):
             api_key = hass.data[DOMAIN].get("anthropic_api_key", "")
-            if api_key:
+            if not api_key:
+                _LOGGER.warning(
+                    "Loam: no anthropic_api_key configured — skipping days-to-maturity estimate"
+                )
+            else:
                 from .api import estimate_days_to_maturity
                 try:
                     dtm = await hass.async_add_executor_job(
@@ -317,8 +325,11 @@ class LoamPlantsView(HomeAssistantView):
                     )
                     if dtm:
                         body["days_to_maturity_min"] = dtm
+                    else:
+                        _LOGGER.info("Loam: Claude returned no maturity estimate for %r", name)
                 except Exception:
-                    pass  # degrade: save without an estimate, user can fill it in
+                    # degrade: save without an estimate, user can fill it in
+                    _LOGGER.exception("Loam: days-to-maturity estimate failed for %r", name)
 
         db = _db(request)
         plant = await hass.async_add_executor_job(db.create_plant, body)
