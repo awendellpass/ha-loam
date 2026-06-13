@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import json
+import logging
 
 import requests
 
 from .const import CLAUDE_MODEL, COMPANION_MODEL, PERMAPEOPLE_API_URL
+
+_LOGGER = logging.getLogger(__name__)
 
 _MATURITY_SCHEMA = {
     "type": "object",
@@ -131,6 +134,7 @@ def estimate_days_to_maturity(name: str, api_key: str) -> int | None:
     )
 
     text = next((b.text for b in resp.content if b.type == "text"), "")
+    _LOGGER.warning("Loam: maturity raw response for %r: %r", name, text)
     parsed = json.loads(text)
     val = parsed.get("days_to_maturity")
     return val if isinstance(val, int) and val > 0 else None

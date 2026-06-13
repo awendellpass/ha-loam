@@ -326,7 +326,7 @@ class LoamPlantsView(HomeAssistantView):
                     if dtm:
                         body["days_to_maturity_min"] = dtm
                     else:
-                        _LOGGER.info("Loam: Claude returned no maturity estimate for %r", name)
+                        _LOGGER.warning("Loam: Claude returned no maturity estimate for %r", name)
                 except Exception:
                     # degrade: save without an estimate, user can fill it in
                     _LOGGER.exception("Loam: days-to-maturity estimate failed for %r", name)

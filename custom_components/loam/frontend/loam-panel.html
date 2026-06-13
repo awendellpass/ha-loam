@@ -296,10 +296,74 @@
       flex-shrink: 0;
     }
 
-    .search-results-scroll {
+    /* Left panel splits into a collapsible search region (top) and the
+       library (bottom). Searching slides the top half open; clearing it
+       hands the full height back to the library. */
+    .plants-split {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    .search-region {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      max-height: 0;
+      opacity: 0;
+      overflow: hidden;
+      transition: max-height 0.35s ease, opacity 0.25s ease;
+    }
+
+    .search-region.open {
+      max-height: 50%;
+      opacity: 1;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .library-region {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .region-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      padding: 10px 12px 6px;
+      flex-shrink: 0;
+    }
+
+    .region-close {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 13px;
+      line-height: 1;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+
+    .region-close:hover {
+      color: var(--text);
+      background: var(--surface2);
+    }
+
+    .region-scroll {
       flex: 1;
       overflow-y: auto;
-      padding: 8px;
+      padding: 0 8px 8px;
+      min-height: 0;
     }
 
     /* ── Plant cards ── */
@@ -596,10 +660,18 @@
           <button class="btn btn-ghost btn-sm" id="btn-custom-plant">+ Custom</button>
         </div>
       </div>
-      <div class="search-results-scroll">
-        <div id="search-results"></div>
-        <div class="section-label">My library</div>
-        <div id="library-list"></div>
+      <div class="plants-split">
+        <div class="search-region" id="search-region">
+          <div class="region-label">
+            <span>Search results</span>
+            <button class="region-close" id="btn-clear-search" title="Clear search">✕</button>
+          </div>
+          <div class="region-scroll" id="search-results"></div>
+        </div>
+        <div class="library-region">
+          <div class="region-label"><span>My library</span></div>
+          <div class="region-scroll" id="library-list"></div>
+        </div>
       </div>
     </div>
     <!-- Right: Plantings list (grid auto-logs here; manual log is a toggle) -->

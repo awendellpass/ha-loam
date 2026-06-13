@@ -536,9 +536,25 @@
     if (e.key === "Enter") doSearch();
   });
 
+  function openSearchRegion() {
+    document.getElementById("search-region").classList.add("open");
+  }
+
+  function closeSearchRegion() {
+    document.getElementById("search-region").classList.remove("open");
+    document.getElementById("search-results").innerHTML = "";
+    state.searchResults = [];
+  }
+
+  document.getElementById("btn-clear-search").addEventListener("click", () => {
+    document.getElementById("openfarm-search").value = "";
+    closeSearchRegion();
+  });
+
   async function doSearch() {
     const q = document.getElementById("openfarm-search").value.trim();
-    if (!q) return;
+    if (!q) { closeSearchRegion(); return; }
+    openSearchRegion();
     const el = document.getElementById("search-results");
     el.innerHTML = '<div class="empty-state">Searching…</div>';
     try {
@@ -585,6 +601,7 @@
 
   // Custom plant form
   document.getElementById("btn-custom-plant").addEventListener("click", () => {
+    openSearchRegion();
     const el = document.getElementById("search-results");
     el.innerHTML = `
       <div class="form-card">
@@ -612,7 +629,7 @@
           description: document.getElementById("custom-desc").value.trim() || null,
           is_custom: true,
         });
-        el.innerHTML = '<div class="empty-state">Plant added to library.</div>';
+        closeSearchRegion();
         await renderLibrary();
         populatePlantDropdown();
       } catch (e) {
