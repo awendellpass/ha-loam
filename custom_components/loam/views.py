@@ -295,18 +295,33 @@ class LoamPlantsView(HomeAssistantView):
         if not name:
             return _error("name is required")
 
+        hass = request.app["hass"]
+
         # Prevent duplicate saves of the same external plant (e.g. "permapeople:182")
         slug = body.get("openfarm_slug", "").strip()
         if slug:
             db = _db(request)
-            exists = await request.app["hass"].async_add_executor_job(
-                db.plant_exists_by_slug, slug
-            )
+            exists = await hass.async_add_executor_job(db.plant_exists_by_slug, slug)
             if exists:
                 return _error("Plant already in library", 409)
 
+        # Auto-estimate days to maturity via Claude when the caller didn't supply
+        # one (Permapeople's feed has no maturity data). Stays editable afterward.
+        if not body.get("days_to_maturity_min"):
+            api_key = hass.data[DOMAIN].get("anthropic_api_key", "")
+            if api_key:
+                from .api import estimate_days_to_maturity
+                try:
+                    dtm = await hass.async_add_executor_job(
+                        estimate_days_to_maturity, name, api_key
+                    )
+                    if dtm:
+                        body["days_to_maturity_min"] = dtm
+                except Exception:
+                    pass  # degrade: save without an estimate, user can fill it in
+
         db = _db(request)
-        plant = await request.app["hass"].async_add_executor_job(db.create_plant, body)
+        plant = await hass.async_add_executor_job(db.create_plant, body)
         return _json(plant, 201)
 
 

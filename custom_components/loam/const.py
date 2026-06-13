@@ -15,8 +15,10 @@ CONF_PERMAPEOPLE_KEY_ID = "permapeople_key_id"
 CONF_PERMAPEOPLE_KEY_SECRET = "permapeople_key_secret"
 CONF_ANTHROPIC_API_KEY = "anthropic_api_key"
 
-# Claude model used to classify companion-planting relationships (cached per pair).
-COMPANION_MODEL = "claude-opus-4-8"
+# Claude model used for companion-planting classification and days-to-maturity
+# estimates (Permapeople's feed carries neither, so we source them from Claude).
+CLAUDE_MODEL = "claude-opus-4-8"
+COMPANION_MODEL = CLAUDE_MODEL  # kept as an alias for existing call sites
 
 # Secrets load from an untracked secrets.py (gitignored — see secrets.py.example).
 # Real API keys never enter version control. Falls back to "" if the file is

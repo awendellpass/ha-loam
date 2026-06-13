@@ -5,7 +5,16 @@ import json
 
 import requests
 
-from .const import COMPANION_MODEL, PERMAPEOPLE_API_URL
+from .const import CLAUDE_MODEL, COMPANION_MODEL, PERMAPEOPLE_API_URL
+
+_MATURITY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "days_to_maturity": {"type": ["integer", "null"]},
+    },
+    "required": ["days_to_maturity"],
+    "additionalProperties": False,
+}
 
 _COMPANION_SCHEMA = {
     "type": "object",
@@ -89,6 +98,42 @@ def search_permapeople(query: str, key_id: str, key_secret: str) -> list[dict]:
             "image_url": "",
         })
     return results
+
+
+def estimate_days_to_maturity(name: str, api_key: str) -> int | None:
+    """Estimate a plant's typical days to maturity via Claude.
+
+    Permapeople's feed doesn't carry maturity timing, so we ask Claude for a
+    typical figure (from transplant for transplanted crops, from sowing for
+    direct-sown ones). Returns None for perennials/trees/shrubs where the
+    concept doesn't apply, or when Claude can't give a sensible number. Raises
+    on API/network errors so the caller can degrade (save the plant without an
+    estimate; it stays editable).
+    """
+    if not name or not api_key:
+        return None
+
+    import anthropic
+
+    client = anthropic.Anthropic(api_key=api_key)
+    resp = client.messages.create(
+        model=CLAUDE_MODEL,
+        max_tokens=200,
+        system=(
+            "You are a horticulture expert. Given a plant or variety name, return its "
+            "typical days to maturity as a single integer — measured from transplant for "
+            "crops normally transplanted, or from direct sowing otherwise. Return null for "
+            "perennials, trees, shrubs, or anything where days-to-maturity doesn't apply."
+        ),
+        messages=[{"role": "user", "content": f"Plant: {name}"}],
+        # Passed via extra_body so it reaches the API regardless of SDK version.
+        extra_body={"output_config": {"format": {"type": "json_schema", "schema": _MATURITY_SCHEMA}}},
+    )
+
+    text = next((b.text for b in resp.content if b.type == "text"), "")
+    parsed = json.loads(text)
+    val = parsed.get("days_to_maturity")
+    return val if isinstance(val, int) and val > 0 else None
 
 
 def classify_companions(pairs: list[dict], api_key: str) -> list[dict]:

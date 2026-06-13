@@ -84,7 +84,6 @@
       tab.classList.add("active");
       document.getElementById(`tab-${tab.dataset.tab}`).classList.add("active");
 
-      if (tab.dataset.tab === "library") renderLibrary();
       if (tab.dataset.tab === "plantings") renderPlantings();
       if (tab.dataset.tab === "garden") loadGardenBoard();
     });
@@ -302,7 +301,7 @@
   function updateBrushHint() {
     const hint = document.getElementById("brush-hint");
     if (!state.plants.length) {
-      hint.textContent = "No plants yet — add some in the Library tab first.";
+      hint.textContent = "No plants yet — add some in the Plants & Plantings tab first.";
     } else if (state.copyMode) {
       hint.textContent = "Copy mode: click a planted square to pick up its plant.";
     } else if (state.brush === "") {
@@ -481,7 +480,7 @@
   function renderPlantLibrary() {
     const el = document.getElementById("library-list");
     if (!state.plants.length) {
-      el.innerHTML = '<div class="empty-state">No plants saved yet.<br/>Search OpenFarm or add a custom plant.</div>';
+      el.innerHTML = '<div class="empty-state">No plants yet.<br/>Search above or add a custom plant.</div>';
       return;
     }
     el.innerHTML = state.plants.map(p => `
@@ -566,16 +565,12 @@
         btn.addEventListener("click", async () => {
           const plantData = state.searchResults[parseInt(btn.dataset.saveIdx, 10)];
           if (!plantData) return;
-          btn.textContent = "Saving…";
+          btn.textContent = "Saving…";  // Claude is estimating days to maturity
           btn.disabled = true;
           try {
             await post("/plants", plantData);
             btn.textContent = "Saved ✓";
-            if (document.querySelector(".tab.active")?.dataset.tab === "library") {
-              await renderLibrary();
-            } else {
-              state.plants = await get("/plants");
-            }
+            await renderLibrary();
             populatePlantDropdown();
           } catch (e) {
             btn.textContent = e.message.includes("409") ? "Already saved" : "Error";
@@ -634,6 +629,7 @@
   async function renderPlantings() {
     await loadAllDataForPlantings();
     renderPlantingsList();
+    renderPlantLibrary();
   }
 
   async function loadAllDataForPlantings() {
@@ -701,6 +697,14 @@
 
   document.getElementById("plantings-filter-garden").addEventListener("change", () => {
     renderPlantingsList();
+  });
+
+  // The grid is the main way to plant; manual logging is an opt-in form.
+  document.getElementById("btn-toggle-log").addEventListener("click", () => {
+    const form = document.getElementById("manual-log-form");
+    const show = form.style.display === "none";
+    form.style.display = show ? "block" : "none";
+    document.getElementById("btn-toggle-log").textContent = show ? "Close" : "+ Log manually";
   });
 
   function renderPlantingsList() {
