@@ -26,6 +26,7 @@ PLANTS_SCHEMA = """
     CREATE TABLE IF NOT EXISTS plants (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
+        scientific_name TEXT,
         openfarm_slug TEXT,
         description TEXT,
         sun_requirements TEXT,
@@ -132,6 +133,10 @@ class LoamDatabase:
 
         # Link placements to their plantings-log entry (added with grid↔log sync).
         self._add_column(conn, "placements", "planting_id", "INTEGER")
+
+        # Scientific (Latin) name shown on plant cards; was previously merged
+        # into description.
+        self._add_column(conn, "plants", "scientific_name", "TEXT")
 
     @staticmethod
     def _add_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:
@@ -330,12 +335,13 @@ class LoamDatabase:
         with self._connect() as conn:
             cur = conn.execute(
                 """INSERT INTO plants
-                   (name, openfarm_slug, description, sun_requirements, sowing_method,
-                    row_spacing_cm, spread_cm, days_to_maturity_min, days_to_maturity_max,
-                    is_custom, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (name, scientific_name, openfarm_slug, description, sun_requirements,
+                    sowing_method, row_spacing_cm, spread_cm, days_to_maturity_min,
+                    days_to_maturity_max, is_custom, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     data["name"],
+                    data.get("scientific_name"),
                     data.get("openfarm_slug"),
                     data.get("description"),
                     data.get("sun_requirements"),

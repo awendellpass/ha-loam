@@ -82,7 +82,6 @@ def search_permapeople(query: str, key_id: str, key_secret: str) -> list[dict]:
         fields = item.get("data") or []
         scientific = item.get("scientific_name") or ""
         description = item.get("description") or ""
-        full_description = " — ".join(p for p in (scientific, description) if p)
 
         sowing = (_data_value(fields, "Propagation - Direct sowing")
                   or _data_value(fields, "Propagation - Transplanting"))
@@ -91,7 +90,8 @@ def search_permapeople(query: str, key_id: str, key_secret: str) -> list[dict]:
             # Reuse the library's external-id column for dedup across sources.
             "openfarm_slug": f"permapeople:{item.get('id', '')}",
             "name": name,
-            "description": full_description,
+            "scientific_name": scientific,
+            "description": description,
             "sun_requirements": _data_value(fields, "Light requirement"),
             "sowing_method": sowing,
             "row_spacing_cm": None,
@@ -134,7 +134,7 @@ def estimate_days_to_maturity(name: str, api_key: str) -> int | None:
     )
 
     text = next((b.text for b in resp.content if b.type == "text"), "")
-    _LOGGER.warning("Loam: maturity raw response for %r: %r", name, text)
+    _LOGGER.debug("Loam: maturity raw response for %r: %r", name, text)
     parsed = json.loads(text)
     val = parsed.get("days_to_maturity")
     return val if isinstance(val, int) and val > 0 else None

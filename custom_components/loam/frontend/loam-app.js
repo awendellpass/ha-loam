@@ -488,17 +488,17 @@
         <div class="plant-card-header">
           <div>
             <div class="plant-card-name">${escapeHtml(p.name)}</div>
-            <div class="plant-card-meta">${escapeHtml(p.sun_requirements || "")}</div>
+            ${p.scientific_name ? `<div class="plant-card-latin">${escapeHtml(p.scientific_name)}</div>` : ""}
           </div>
           <button class="btn btn-danger btn-sm" data-delete-plant="${p.id}">✕</button>
         </div>
-        ${p.description ? `<div class="plant-card-meta" style="margin-top:6px">${escapeHtml(p.description)}</div>` : ""}
         <div class="edit-row">
           <label>Days to maturity</label>
           <input type="number" min="0" class="num-input" data-dtm="${p.id}" value="${p.days_to_maturity_min ?? ""}" placeholder="—" />
           <button class="btn btn-ghost btn-sm" data-save-dtm="${p.id}">Save</button>
         </div>
-        ${p.is_custom ? '<div class="plant-card-meta" style="color:#66bb6a;margin-top:4px">Custom</div>' : ""}
+        <div class="plant-card-meta">Sun: ${escapeHtml(p.sun_requirements || "—")}</div>
+        ${p.is_custom ? '<div class="plant-card-meta" style="color:#66bb6a">Custom</div>' : ""}
       </div>
     `).join("");
 
@@ -569,11 +569,11 @@
           <div class="plant-card-header">
             <div>
               <div class="plant-card-name">${escapeHtml(p.name)}</div>
-              <div class="plant-card-meta">${escapeHtml(p.sun_requirements || "")}${p.days_to_maturity_min ? ` · ${p.days_to_maturity_min} days` : ""}</div>
+              ${p.scientific_name ? `<div class="plant-card-latin">${escapeHtml(p.scientific_name)}</div>` : ""}
             </div>
             <button class="btn btn-primary btn-sm" data-save-idx="${i}">+ Save</button>
           </div>
-          ${p.description ? `<div class="plant-card-meta" style="margin-top:6px">${escapeHtml(p.description.substring(0, 120))}…</div>` : ""}
+          <div class="plant-card-meta">Sun: ${escapeHtml(p.sun_requirements || "—")}</div>
         </div>
       `).join("");
 
@@ -607,6 +607,7 @@
       <div class="form-card">
         <h3>Add Custom Plant</h3>
         <div class="form-group"><label>Name *</label><input type="text" id="custom-name" /></div>
+        <div class="form-group"><label>Scientific name</label><input type="text" id="custom-latin" placeholder="e.g. Solanum lycopersicum" /></div>
         <div class="form-group"><label>Sun requirements</label><input type="text" id="custom-sun" placeholder="e.g. Full sun" /></div>
         <div class="form-group"><label>Sowing method</label><input type="text" id="custom-sow" placeholder="e.g. Direct sow" /></div>
         <div class="form-group"><label>Days to maturity</label><input type="number" id="custom-days" placeholder="e.g. 60" /></div>
@@ -623,6 +624,7 @@
       try {
         await post("/plants", {
           name,
+          scientific_name: document.getElementById("custom-latin").value.trim() || null,
           sun_requirements: document.getElementById("custom-sun").value.trim() || null,
           sowing_method: document.getElementById("custom-sow").value.trim() || null,
           days_to_maturity_min: parseInt(document.getElementById("custom-days").value) || null,
