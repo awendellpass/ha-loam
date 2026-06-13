@@ -351,6 +351,14 @@ class LoamDatabase:
             row = conn.execute("SELECT * FROM plants WHERE id = ?", (cur.lastrowid,)).fetchone()
             return dict(row)
 
+    def update_plant(self, plant_id: int, days_to_maturity_min: int | None) -> dict | None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE plants SET days_to_maturity_min = ? WHERE id = ?",
+                (days_to_maturity_min, plant_id),
+            )
+        return self.get_plant(plant_id)
+
     def plant_exists_by_slug(self, slug: str) -> bool:
         with self._connect() as conn:
             row = conn.execute(
@@ -370,7 +378,7 @@ class LoamDatabase:
     def get_plantings(self, garden_id: int | None = None, status: str | None = None) -> list[dict]:
         with self._connect() as conn:
             query = """
-                SELECT pl.*, p.name AS plant_name, g.name AS garden_name
+                SELECT pl.*, p.name AS plant_name, p.days_to_maturity_min, g.name AS garden_name
                 FROM plantings pl
                 JOIN plants p ON p.id = pl.plant_id
                 JOIN gardens g ON g.id = pl.garden_id
@@ -391,7 +399,7 @@ class LoamDatabase:
     def get_planting(self, planting_id: int) -> dict | None:
         with self._connect() as conn:
             row = conn.execute(
-                """SELECT pl.*, p.name AS plant_name, g.name AS garden_name
+                """SELECT pl.*, p.name AS plant_name, p.days_to_maturity_min, g.name AS garden_name
                    FROM plantings pl
                    JOIN plants p ON p.id = pl.plant_id
                    JOIN gardens g ON g.id = pl.garden_id
@@ -411,7 +419,8 @@ class LoamDatabase:
         return self.get_planting(cur.lastrowid)
 
     def update_planting(self, planting_id: int, status: str | None,
-                        notes: str | None, removed_date: str | None) -> dict | None:
+                        notes: str | None, removed_date: str | None,
+                        planted_date: str | None = None) -> dict | None:
         with self._connect() as conn:
             updates, params = [], []
             if status is not None:
@@ -423,6 +432,9 @@ class LoamDatabase:
             if removed_date is not None:
                 updates.append("removed_date = ?")
                 params.append(removed_date)
+            if planted_date is not None:
+                updates.append("planted_date = ?")
+                params.append(planted_date)
             if not updates:
                 return self.get_planting(planting_id)
             params.append(planting_id)

@@ -344,6 +344,7 @@ class LoamPlantSearchView(HomeAssistantView):
 
 
 # ---------------------------------------------------------------------------
+# PUT    /api/loam/plants/{plant_id}   — update days_to_maturity_min
 # DELETE /api/loam/plants/{plant_id}
 # ---------------------------------------------------------------------------
 
@@ -351,6 +352,32 @@ class LoamPlantDetailView(HomeAssistantView):
     url = "/api/loam/plants/{plant_id}"
     name = "api:loam:plant_detail"
     requires_auth = True
+
+    async def put(self, request: web.Request, plant_id: str) -> web.Response:
+        try:
+            pid = int(plant_id)
+        except ValueError:
+            return _error("Invalid plant_id")
+
+        try:
+            body = await request.json()
+        except Exception:
+            return _error("Invalid JSON")
+
+        dtm = body.get("days_to_maturity_min")
+        if dtm is not None:
+            try:
+                dtm = int(dtm)
+            except (TypeError, ValueError):
+                return _error("days_to_maturity_min must be a whole number")
+            if dtm < 0:
+                return _error("days_to_maturity_min must be 0 or greater")
+
+        db = _db(request)
+        plant = await request.app["hass"].async_add_executor_job(db.update_plant, pid, dtm)
+        if plant is None:
+            return _error("Plant not found", 404)
+        return _json(plant)
 
     async def delete(self, request: web.Request, plant_id: str) -> web.Response:
         try:
@@ -437,6 +464,10 @@ class LoamPlantingDetailView(HomeAssistantView):
         if status is not None and status not in PLANTING_STATUSES:
             return _error(f"status must be one of: {', '.join(PLANTING_STATUSES)}")
 
+        planted_date = body.get("planted_date")
+        if planted_date is not None and not str(planted_date).strip():
+            return _error("planted_date cannot be blank")
+
         db = _db(request)
         planting = await request.app["hass"].async_add_executor_job(
             db.update_planting,
@@ -444,6 +475,7 @@ class LoamPlantingDetailView(HomeAssistantView):
             status,
             body.get("notes"),
             body.get("removed_date"),
+            planted_date,
         )
         if planting is None:
             return _error("Planting not found", 404)

@@ -39,6 +39,22 @@
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
+  function addDaysISO(dateStr, days) {
+    if (!dateStr || days == null) return null;
+    const d = new Date(dateStr + "T00:00:00");
+    if (isNaN(d.getTime())) return null;
+    d.setDate(d.getDate() + Number(days));
+    return d.toISOString().slice(0, 10);
+  }
+
+  function harvestLine(p) {
+    if (!p.days_to_maturity_min) {
+      return 'Est. harvest: — <span style="opacity:.7">(set days to maturity in Library)</span>';
+    }
+    const h = addDaysISO(p.planted_date, p.days_to_maturity_min);
+    return h ? `Est. harvest ~ ${h} (${p.days_to_maturity_min} days)` : "Est. harvest: —";
+  }
+
   // ── API helpers ────────────────────────────────────────────────────────────
   async function api(method, path, body) {
     const opts = {
@@ -473,11 +489,16 @@
         <div class="plant-card-header">
           <div>
             <div class="plant-card-name">${escapeHtml(p.name)}</div>
-            <div class="plant-card-meta">${escapeHtml(p.sun_requirements || "")}${p.days_to_maturity_min ? ` · ${p.days_to_maturity_min} days` : ""}</div>
+            <div class="plant-card-meta">${escapeHtml(p.sun_requirements || "")}</div>
           </div>
           <button class="btn btn-danger btn-sm" data-delete-plant="${p.id}">✕</button>
         </div>
         ${p.description ? `<div class="plant-card-meta" style="margin-top:6px">${escapeHtml(p.description)}</div>` : ""}
+        <div class="edit-row">
+          <label>Days to maturity</label>
+          <input type="number" min="0" class="num-input" data-dtm="${p.id}" value="${p.days_to_maturity_min ?? ""}" placeholder="—" />
+          <button class="btn btn-ghost btn-sm" data-save-dtm="${p.id}">Save</button>
+        </div>
         ${p.is_custom ? '<div class="plant-card-meta" style="color:#66bb6a;margin-top:4px">Custom</div>' : ""}
       </div>
     `).join("");
@@ -488,6 +509,24 @@
         const pid = btn.dataset.deletePlant;
         await del(`/plants/${pid}`).catch(e => alert(e.message));
         await renderLibrary();
+      });
+    });
+
+    el.querySelectorAll("[data-save-dtm]").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const pid = btn.dataset.saveDtm;
+        const input = el.querySelector(`.num-input[data-dtm="${pid}"]`);
+        const val = input.value.trim();
+        try {
+          await put(`/plants/${pid}`, { days_to_maturity_min: val === "" ? null : parseInt(val, 10) });
+          btn.textContent = "Saved ✓";
+          setTimeout(() => { btn.textContent = "Save"; }, 1200);
+          // keep local copy fresh so plantings harvest dates pick it up
+          const plant = state.plants.find(x => String(x.id) === pid);
+          if (plant) plant.days_to_maturity_min = val === "" ? null : parseInt(val, 10);
+        } catch (e) {
+          alert(e.message);
+        }
       });
     });
   }
@@ -690,11 +729,14 @@
         <div class="planting-card">
           <div class="planting-card-header">
             <div>
-              <div class="planting-card-name">${p.plant_name}</div>
-              <div class="planting-card-meta">
-                Planted ${p.planted_date}${p.quantity ? ` · qty ${p.quantity}` : ""}
+              <div class="planting-card-name">${escapeHtml(p.plant_name)}</div>
+              <div class="planting-card-meta edit-row">
+                <label>Planted</label>
+                <input type="date" class="date-input" data-planted="${p.id}" value="${p.planted_date}" />
+                ${p.quantity ? `<span>· qty ${p.quantity}</span>` : ""}
               </div>
-              ${p.notes ? `<div class="planting-card-meta">${p.notes}</div>` : ""}
+              <div class="planting-card-meta">${harvestLine(p)}</div>
+              ${p.notes ? `<div class="planting-card-meta">${escapeHtml(p.notes)}</div>` : ""}
             </div>
             <span class="status-chip ${p.status}">${p.status}</span>
           </div>
@@ -705,6 +747,18 @@
         </div>
       `).join("")}
     `).join("");
+
+    el.querySelectorAll("[data-planted]").forEach(input => {
+      input.addEventListener("change", async () => {
+        if (!input.value) return;
+        try {
+          await put(`/plantings/${input.dataset.planted}`, { planted_date: input.value });
+          await renderPlantings();
+        } catch (e) {
+          alert(e.message);
+        }
+      });
+    });
 
     el.querySelectorAll("[data-harvest]").forEach(btn => {
       btn.addEventListener("click", async () => {
