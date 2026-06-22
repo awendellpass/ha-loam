@@ -13,12 +13,11 @@ PERMAPEOPLE_API_URL = "https://permapeople.org/api/search"
 # configuration.yaml keys read by CONFIG_SCHEMA in __init__.py.
 CONF_PERMAPEOPLE_KEY_ID = "permapeople_key_id"
 CONF_PERMAPEOPLE_KEY_SECRET = "permapeople_key_secret"
-CONF_ANTHROPIC_API_KEY = "anthropic_api_key"
+CONF_OLLAMA_HOST = "ollama_host"
 
-# Claude model used for companion-planting classification and days-to-maturity
-# estimates (Permapeople's feed carries neither, so we source them from Claude).
-CLAUDE_MODEL = "claude-opus-4-8"
-COMPANION_MODEL = CLAUDE_MODEL  # kept as an alias for existing call sites
+# Ollama model used for companion-planting classification and days-to-maturity
+# estimates (Permapeople's feed carries neither). Ollama runs locally on forge.
+OLLAMA_MODEL = "llama3.1:8b"
 
 # Secrets load from an untracked secrets.py (gitignored — see secrets.py.example).
 # Real API keys never enter version control. Falls back to "" if the file is

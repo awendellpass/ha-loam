@@ -255,12 +255,12 @@ class LoamCompanionsView(HomeAssistantView):
             if f"{a},{b}" not in cached
         ]
 
-        api_key = hass.data[DOMAIN].get("anthropic_api_key", "")
-        if missing and api_key:
+        ollama_host = hass.data[DOMAIN].get("ollama_host", "")
+        if missing and ollama_host:
             from .api import classify_companions
             try:
                 resolved = await hass.async_add_executor_job(
-                    classify_companions, missing, api_key
+                    classify_companions, missing, ollama_host
                 )
             except Exception:
                 resolved = []  # degrade: show only cached relationships
@@ -312,22 +312,22 @@ class LoamPlantsView(HomeAssistantView):
         # Auto-estimate days to maturity via Claude when the caller didn't supply
         # one (Permapeople's feed has no maturity data). Stays editable afterward.
         if not body.get("days_to_maturity_min"):
-            api_key = hass.data[DOMAIN].get("anthropic_api_key", "")
-            if not api_key:
+            ollama_host = hass.data[DOMAIN].get("ollama_host", "")
+            if not ollama_host:
                 _LOGGER.warning(
-                    "Loam: no anthropic_api_key configured — skipping days-to-maturity estimate"
+                    "Loam: no ollama_host configured — skipping days-to-maturity estimate"
                 )
             else:
                 from .api import estimate_days_to_maturity
                 try:
                     dtm = await hass.async_add_executor_job(
-                        estimate_days_to_maturity, name, api_key
+                        estimate_days_to_maturity, name, ollama_host
                     )
                     if dtm:
                         body["days_to_maturity_min"] = dtm
                     else:
                         # Normal for perennials/trees — keep it quiet.
-                        _LOGGER.debug("Loam: Claude returned no maturity estimate for %r", name)
+                        _LOGGER.debug("Loam: Ollama returned no maturity estimate for %r", name)
                 except Exception:
                     # degrade: save without an estimate, user can fill it in
                     _LOGGER.exception("Loam: days-to-maturity estimate failed for %r", name)

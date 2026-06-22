@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 
 from .const import (
-    CONF_ANTHROPIC_API_KEY,
+    CONF_OLLAMA_HOST,
     CONF_PERMAPEOPLE_KEY_ID,
     CONF_PERMAPEOPLE_KEY_SECRET,
     DOMAIN,
@@ -26,7 +26,7 @@ CONFIG_SCHEMA = vol.Schema(
             {
                 vol.Optional(CONF_PERMAPEOPLE_KEY_ID): cv.string,
                 vol.Optional(CONF_PERMAPEOPLE_KEY_SECRET): cv.string,
-                vol.Optional(CONF_ANTHROPIC_API_KEY): cv.string,
+                vol.Optional(CONF_OLLAMA_HOST): cv.string,
             }
         )
     },
@@ -48,7 +48,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         "db": db,
         "permapeople_key_id": conf.get(CONF_PERMAPEOPLE_KEY_ID, ""),
         "permapeople_key_secret": conf.get(CONF_PERMAPEOPLE_KEY_SECRET, ""),
-        "anthropic_api_key": conf.get(CONF_ANTHROPIC_API_KEY, ""),
+        "ollama_host": conf.get(CONF_OLLAMA_HOST, ""),
     }
 
     frontend_dir = os.path.join(os.path.dirname(__file__), "frontend")
