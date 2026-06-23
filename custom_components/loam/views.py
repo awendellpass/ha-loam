@@ -333,6 +333,14 @@ class LoamPlantsView(HomeAssistantView):
                 "Loam: no ollama_host configured — skipping maturity/phenology estimate"
             )
 
+        # Normalize common vs. scientific name. Permapeople sometimes indexes
+        # plants by their Latin binomial as the primary name. Ollama corrects
+        # this: common_name is always the English name, scientific_name the Latin.
+        if metadata.get("common_name"):
+            body["name"] = metadata["common_name"]
+        if metadata.get("scientific_name") and not body.get("scientific_name"):
+            body["scientific_name"] = metadata["scientific_name"]
+
         if not body.get("days_to_maturity_min") and metadata.get("days_to_maturity"):
             body["days_to_maturity_min"] = metadata["days_to_maturity"]
 

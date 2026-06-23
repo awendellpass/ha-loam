@@ -93,6 +93,9 @@ def estimate_plant_metadata(name: str, scientific_name: str | None, ollama_host:
         "first fall frost ~Oct 1). All week offsets are relative to the last "
         "spring frost date (negative = before frost, e.g. -8 = 8 weeks before).\n\n"
         "Return JSON with exactly these fields:\n"
+        "  common_name        — the familiar common name in English (e.g. 'Tomato', not 'Solanum lycopersicum');\n"
+        "                       if the input name is already a common name, repeat it here\n"
+        "  scientific_name    — the full Latin binomial (e.g. 'Solanum lycopersicum'); null if unknown\n"
         "  days_to_maturity   — integer for annuals/vegs (from transplant or direct sow); null for perennials/trees\n"
         "  plant_type         — one of: vegetable, herb, native_plant, annual_flower, perennial_flower, tree_shrub\n"
         "  start_indoors_week — weeks before frost to start seeds indoors (e.g. -8); null if not started indoors\n"
@@ -157,7 +160,12 @@ def estimate_plant_metadata(name: str, scientific_name: str | None, ollama_host:
     if dtm is not None and dtm <= 0:
         dtm = None
 
+    common_name = (parsed.get("common_name") or "").strip() or None
+    sci_name    = (parsed.get("scientific_name") or "").strip() or None
+
     return {
+        "common_name":     common_name,
+        "scientific_name": sci_name,
         "days_to_maturity": dtm,
         "plant_type": plant_type,
         "start_indoors_week": _week(parsed.get("start_indoors_week")),
