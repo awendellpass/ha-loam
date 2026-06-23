@@ -74,27 +74,36 @@ def search_permapeople(query: str, key_id: str, key_secret: str) -> list[dict]:
     return results
 
 
-def estimate_days_to_maturity(name: str, ollama_host: str) -> int | None:
-    """Estimate a plant's typical days to maturity via Ollama.
+def estimate_plant_metadata(name: str, scientific_name: str | None, ollama_host: str) -> dict:
+    """Estimate growing-calendar data + days to maturity for a plant via Ollama.
 
-    Permapeople's feed doesn't carry maturity timing, so we ask the local model
-    for a typical figure (from transplant for transplanted crops, from sowing for
-    direct-sown ones). Returns None for perennials/trees/shrubs where the concept
-    doesn't apply, or when the model can't give a sensible number. Raises on
-    network errors so the caller can degrade (save the plant without an estimate;
-    it stays editable).
+    Returns a dict with 'days_to_maturity' plus phenology fields (all week offsets
+    are relative to the last spring frost date). Raises on network errors so callers
+    can degrade gracefully. Returns {} when inputs are missing.
+
+    Replaces the old estimate_days_to_maturity — one call gives everything.
     """
     if not name or not ollama_host:
-        return None
+        return {}
 
+    latin = f" ({scientific_name})" if scientific_name else ""
     prompt = (
-        f"What is the typical days to maturity for: {name}?\n\n"
-        "For annual vegetables and herbs, return the integer number of days "
-        "(from transplant for transplanted crops, from direct sowing otherwise). "
-        "For perennials, trees, shrubs, or anything where days-to-maturity does "
-        "not apply, return null.\n\n"
-        'Respond with JSON in this exact format: {"days_to_maturity": 75} '
-        'or {"days_to_maturity": null}'
+        f"Give growing-calendar data for: {name}{latin}\n\n"
+        "Assume a northern US / upper Midwest climate (last spring frost ~May 7, "
+        "first fall frost ~Oct 1). All week offsets are relative to the last "
+        "spring frost date (negative = before frost, e.g. -8 = 8 weeks before).\n\n"
+        "Return JSON with exactly these fields:\n"
+        "  days_to_maturity   — integer for annuals/vegs (from transplant or direct sow); null for perennials/trees\n"
+        "  plant_type         — one of: vegetable, herb, native_plant, annual_flower, perennial_flower, tree_shrub\n"
+        "  start_indoors_week — weeks before frost to start seeds indoors (e.g. -8); null if not started indoors\n"
+        "  direct_sow_week    — weeks relative to frost for outdoor direct sowing; null if not direct-sown\n"
+        "  transplant_week    — weeks relative to frost to transplant outside; null if direct-sown\n"
+        "  harvest_start_week — weeks after frost when harvest begins; null for ornamentals\n"
+        "  harvest_end_week   — weeks after frost when harvest ends (or frost kills it); null for ornamentals\n"
+        "  bloom_start_week   — weeks after frost when blooming begins (ornamentals); null for veg/herbs\n"
+        "  bloom_end_week     — weeks after frost when blooming ends; null for veg/herbs\n"
+        "  bloom_color        — hex color of dominant bloom (e.g. \"#ff6600\"); null for veg/herbs\n"
+        "  pollinators        — array from [\"bee\",\"butterfly\",\"hummingbird\",\"bird\"]; [] for veg/herbs\n"
     )
 
     resp = requests.post(
@@ -105,7 +114,7 @@ def estimate_days_to_maturity(name: str, ollama_host: str) -> int | None:
                 {
                     "role": "system",
                     "content": (
-                        "You are a horticulture expert. "
+                        "You are a horticulture expert for northern US gardens. "
                         "Always respond with valid JSON only, no explanation."
                     ),
                 },
@@ -114,15 +123,53 @@ def estimate_days_to_maturity(name: str, ollama_host: str) -> int | None:
             "format": "json",
             "stream": False,
         },
-        timeout=60,
+        timeout=90,
     )
     resp.raise_for_status()
 
     text = resp.json()["message"]["content"]
-    _LOGGER.debug("Loam: maturity raw response for %r: %r", name, text)
+    _LOGGER.debug("Loam: metadata raw response for %r: %r", name, text)
     parsed = json.loads(text)
-    val = parsed.get("days_to_maturity")
-    return val if isinstance(val, int) and val > 0 else None
+
+    def _week(val):
+        if val is None:
+            return None
+        try:
+            return int(val)
+        except (TypeError, ValueError):
+            return None
+
+    plant_type = parsed.get("plant_type", "vegetable")
+    if plant_type not in ("vegetable", "herb", "native_plant",
+                          "annual_flower", "perennial_flower", "tree_shrub"):
+        plant_type = "vegetable"
+
+    pollinators = parsed.get("pollinators") or []
+    if not isinstance(pollinators, list):
+        pollinators = []
+    pollinators = [p for p in pollinators if p in {"bee", "butterfly", "hummingbird", "bird"}]
+
+    bloom_color = parsed.get("bloom_color")
+    if bloom_color and not str(bloom_color).startswith("#"):
+        bloom_color = None
+
+    dtm = _week(parsed.get("days_to_maturity"))
+    if dtm is not None and dtm <= 0:
+        dtm = None
+
+    return {
+        "days_to_maturity": dtm,
+        "plant_type": plant_type,
+        "start_indoors_week": _week(parsed.get("start_indoors_week")),
+        "direct_sow_week":    _week(parsed.get("direct_sow_week")),
+        "transplant_week":    _week(parsed.get("transplant_week")),
+        "harvest_start_week": _week(parsed.get("harvest_start_week")),
+        "harvest_end_week":   _week(parsed.get("harvest_end_week")),
+        "bloom_start_week":   _week(parsed.get("bloom_start_week")),
+        "bloom_end_week":     _week(parsed.get("bloom_end_week")),
+        "bloom_color":        bloom_color,
+        "pollinators":        pollinators,
+    }
 
 
 def classify_companions(pairs: list[dict], ollama_host: str) -> list[dict]:

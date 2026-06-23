@@ -52,6 +52,9 @@ def async_setup_views(hass: HomeAssistant) -> None:
     hass.http.register_view(LoamPlantDetailView)
     hass.http.register_view(LoamPlantingsView)
     hass.http.register_view(LoamPlantingDetailView)
+    hass.http.register_view(LoamCalendarView)
+    hass.http.register_view(LoamPhenologyView)
+    hass.http.register_view(LoamSettingsView)
 
 
 # ---------------------------------------------------------------------------
@@ -309,31 +312,44 @@ class LoamPlantsView(HomeAssistantView):
             if exists:
                 return _error("Plant already in library", 409)
 
-        # Auto-estimate days to maturity via Claude when the caller didn't supply
-        # one (Permapeople's feed has no maturity data). Stays editable afterward.
-        if not body.get("days_to_maturity_min"):
-            ollama_host = hass.data[DOMAIN].get("ollama_host", "")
-            if not ollama_host:
-                _LOGGER.warning(
-                    "Loam: no ollama_host configured — skipping days-to-maturity estimate"
+        # Ask Ollama for days-to-maturity + full growing-calendar phenology in
+        # one call (Permapeople carries neither). Both are cached; phenology
+        # powers the Calendar tab; maturity powers harvest-date estimates.
+        ollama_host = hass.data[DOMAIN].get("ollama_host", "")
+        metadata = {}
+        if ollama_host:
+            from .api import estimate_plant_metadata
+            try:
+                metadata = await hass.async_add_executor_job(
+                    estimate_plant_metadata,
+                    name,
+                    body.get("scientific_name"),
+                    ollama_host,
                 )
-            else:
-                from .api import estimate_days_to_maturity
-                try:
-                    dtm = await hass.async_add_executor_job(
-                        estimate_days_to_maturity, name, ollama_host
-                    )
-                    if dtm:
-                        body["days_to_maturity_min"] = dtm
-                    else:
-                        # Normal for perennials/trees — keep it quiet.
-                        _LOGGER.debug("Loam: Ollama returned no maturity estimate for %r", name)
-                except Exception:
-                    # degrade: save without an estimate, user can fill it in
-                    _LOGGER.exception("Loam: days-to-maturity estimate failed for %r", name)
+            except Exception:
+                _LOGGER.exception("Loam: metadata estimate failed for %r", name)
+        else:
+            _LOGGER.warning(
+                "Loam: no ollama_host configured — skipping maturity/phenology estimate"
+            )
+
+        if not body.get("days_to_maturity_min") and metadata.get("days_to_maturity"):
+            body["days_to_maturity_min"] = metadata["days_to_maturity"]
 
         db = _db(request)
         plant = await hass.async_add_executor_job(db.create_plant, body)
+
+        # Persist phenology so the Calendar tab has data immediately.
+        if metadata:
+            phenology_data = {k: metadata[k] for k in (
+                "plant_type", "start_indoors_week", "direct_sow_week",
+                "transplant_week", "harvest_start_week", "harvest_end_week",
+                "bloom_start_week", "bloom_end_week", "bloom_color", "pollinators",
+            ) if k in metadata}
+            await hass.async_add_executor_job(
+                db.save_phenology, plant["id"], phenology_data
+            )
+
         return _json(plant, 201)
 
 
@@ -400,8 +416,14 @@ class LoamPlantDetailView(HomeAssistantView):
             if dtm < 0:
                 return _error("days_to_maturity_min must be 0 or greater")
 
+        wishlist = body.get("wishlist")
+        if wishlist is not None:
+            wishlist = bool(wishlist)
+
         db = _db(request)
-        plant = await request.app["hass"].async_add_executor_job(db.update_plant, pid, dtm)
+        plant = await request.app["hass"].async_add_executor_job(
+            db.update_plant, pid, dtm, wishlist
+        )
         if plant is None:
             return _error("Plant not found", 404)
         return _json(plant)
@@ -519,3 +541,155 @@ class LoamPlantingDetailView(HomeAssistantView):
         if not success:
             return _error("Planting not found", 404)
         return _json({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# GET /api/loam/calendar
+#   Returns all plants grouped (garden / wishlist / library) with cached
+#   phenology attached. Does NOT trigger Ollama — use POST /api/loam/phenology
+#   to fill in uncached plants.
+# ---------------------------------------------------------------------------
+
+class LoamCalendarView(HomeAssistantView):
+    url = "/api/loam/calendar"
+    name = "api:loam:calendar"
+    requires_auth = True
+
+    async def get(self, request: web.Request) -> web.Response:
+        hass = request.app["hass"]
+        db = _db(request)
+
+        # Frost date: config.yaml override wins; fall back to DB setting.
+        frost_override = hass.data[DOMAIN].get("frost_date_override", "")
+        if frost_override:
+            frost_date = frost_override
+        else:
+            frost_date = await hass.async_add_executor_job(db.get_setting, "frost_date") or ""
+
+        groups = await hass.async_add_executor_job(db.get_calendar_plants)
+        all_plants = groups["garden"] + groups["wishlist"] + groups["library"]
+        all_ids = [p["id"] for p in all_plants]
+
+        phenology_map = await hass.async_add_executor_job(db.get_phenology, all_ids)
+
+        def attach_phenology(plant_list):
+            for p in plant_list:
+                p["phenology"] = phenology_map.get(p["id"])
+            return plant_list
+
+        return _json({
+            "frost_date": frost_date,
+            "frost_from_config": bool(frost_override),
+            "sections": [
+                {"label": "In My Garden", "key": "garden",
+                 "plants": attach_phenology(groups["garden"])},
+                {"label": "Wishlist",     "key": "wishlist",
+                 "plants": attach_phenology(groups["wishlist"])},
+                {"label": "My Library",   "key": "library",
+                 "plants": attach_phenology(groups["library"])},
+            ],
+        })
+
+
+# ---------------------------------------------------------------------------
+# POST /api/loam/phenology
+#   Body: { "plant_id": N }
+#   Estimates phenology for one plant via Ollama and caches it.
+#   The Calendar tab calls this one-at-a-time for uncached plants so the
+#   user sees rows fill in progressively.
+# ---------------------------------------------------------------------------
+
+class LoamPhenologyView(HomeAssistantView):
+    url = "/api/loam/phenology"
+    name = "api:loam:phenology"
+    requires_auth = True
+
+    async def post(self, request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+        except Exception:
+            return _error("Invalid JSON")
+
+        plant_id = body.get("plant_id")
+        if not plant_id:
+            return _error("plant_id is required")
+        try:
+            pid = int(plant_id)
+        except (TypeError, ValueError):
+            return _error("plant_id must be a number")
+
+        hass = request.app["hass"]
+        db = _db(request)
+
+        plant = await hass.async_add_executor_job(db.get_plant, pid)
+        if plant is None:
+            return _error("Plant not found", 404)
+
+        ollama_host = hass.data[DOMAIN].get("ollama_host", "")
+        if not ollama_host:
+            return _error("Ollama not configured", 503)
+
+        from .api import estimate_plant_metadata
+        try:
+            metadata = await hass.async_add_executor_job(
+                estimate_plant_metadata,
+                plant["name"],
+                plant.get("scientific_name"),
+                ollama_host,
+            )
+        except Exception as err:
+            return _error(f"Ollama estimation failed: {err}", 502)
+
+        phenology_data = {k: metadata[k] for k in (
+            "plant_type", "start_indoors_week", "direct_sow_week",
+            "transplant_week", "harvest_start_week", "harvest_end_week",
+            "bloom_start_week", "bloom_end_week", "bloom_color", "pollinators",
+        ) if k in metadata}
+
+        await hass.async_add_executor_job(db.save_phenology, pid, phenology_data)
+        return _json({"plant_id": pid, "phenology": phenology_data})
+
+
+# ---------------------------------------------------------------------------
+# GET  /api/loam/settings        — returns all user-configurable settings
+# PUT  /api/loam/settings        — update settings (currently frost_date)
+# ---------------------------------------------------------------------------
+
+class LoamSettingsView(HomeAssistantView):
+    url = "/api/loam/settings"
+    name = "api:loam:settings"
+    requires_auth = True
+
+    async def get(self, request: web.Request) -> web.Response:
+        hass = request.app["hass"]
+        db = _db(request)
+        frost_override = hass.data[DOMAIN].get("frost_date_override", "")
+        frost_date = frost_override or await hass.async_add_executor_job(
+            db.get_setting, "frost_date"
+        ) or ""
+        return _json({"frost_date": frost_date, "frost_from_config": bool(frost_override)})
+
+    async def put(self, request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+        except Exception:
+            return _error("Invalid JSON")
+
+        frost_date = (body.get("frost_date") or "").strip()
+        if frost_date:
+            # Validate MM-DD format
+            parts = frost_date.split("-")
+            valid = (
+                len(parts) == 2
+                and all(p.isdigit() for p in parts)
+                and 1 <= int(parts[0]) <= 12
+                and 1 <= int(parts[1]) <= 31
+            )
+            if not valid:
+                return _error("frost_date must be MM-DD (e.g. 05-07)")
+
+        hass = request.app["hass"]
+        db = _db(request)
+        if frost_date:
+            await hass.async_add_executor_job(db.set_setting, "frost_date", frost_date)
+        return _json({"frost_date": frost_date, "frost_from_config": False})

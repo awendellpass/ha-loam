@@ -91,6 +91,35 @@ COMPANIONS_SCHEMA = """
     );
 """
 
+# Cached growing-calendar data per plant, estimated once via Ollama.
+# All week offsets are relative to the user's last spring frost date.
+# Negative = weeks before frost (e.g. -8 = 8 weeks before for seed starting).
+PHENOLOGY_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS plant_phenology (
+        plant_id INTEGER PRIMARY KEY,
+        plant_type TEXT,
+        start_indoors_week INTEGER,
+        direct_sow_week INTEGER,
+        transplant_week INTEGER,
+        harvest_start_week INTEGER,
+        harvest_end_week INTEGER,
+        bloom_start_week INTEGER,
+        bloom_end_week INTEGER,
+        bloom_color TEXT,
+        pollinators TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(plant_id) REFERENCES plants(id) ON DELETE CASCADE
+    );
+"""
+
+# Simple key/value store for user-configurable settings (e.g. frost_date).
+SETTINGS_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS loam_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+"""
+
 
 class LoamDatabase:
     """Manages all Loam data in a local SQLite database."""
@@ -113,6 +142,7 @@ class LoamDatabase:
             conn.executescript(
                 GARDENS_SCHEMA + PLANTS_SCHEMA + PLANTINGS_SCHEMA
                 + PLACEMENTS_SCHEMA + COMPANIONS_SCHEMA
+                + PHENOLOGY_SCHEMA + SETTINGS_SCHEMA
             )
             self._migrate(conn)
 
@@ -137,6 +167,10 @@ class LoamDatabase:
         # Scientific (Latin) name shown on plant cards; was previously merged
         # into description.
         self._add_column(conn, "plants", "scientific_name", "TEXT")
+
+        # Wishlist flag — plants starred for future planning; appear in the
+        # Calendar tab even when not yet planted.
+        self._add_column(conn, "plants", "wishlist", "INTEGER NOT NULL DEFAULT 0")
 
     @staticmethod
     def _add_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:
@@ -357,12 +391,20 @@ class LoamDatabase:
             row = conn.execute("SELECT * FROM plants WHERE id = ?", (cur.lastrowid,)).fetchone()
             return dict(row)
 
-    def update_plant(self, plant_id: int, days_to_maturity_min: int | None) -> dict | None:
+    def update_plant(self, plant_id: int, days_to_maturity_min: int | None = None,
+                     wishlist: bool | None = None) -> dict | None:
         with self._connect() as conn:
-            conn.execute(
-                "UPDATE plants SET days_to_maturity_min = ? WHERE id = ?",
-                (days_to_maturity_min, plant_id),
-            )
+            updates, params = [], []
+            if days_to_maturity_min is not None:
+                updates.append("days_to_maturity_min = ?")
+                params.append(days_to_maturity_min)
+            if wishlist is not None:
+                updates.append("wishlist = ?")
+                params.append(1 if wishlist else 0)
+            if not updates:
+                return self.get_plant(plant_id)
+            params.append(plant_id)
+            conn.execute(f"UPDATE plants SET {', '.join(updates)} WHERE id = ?", params)
         return self.get_plant(plant_id)
 
     def plant_exists_by_slug(self, slug: str) -> bool:
@@ -455,3 +497,120 @@ class LoamDatabase:
             conn.execute("DELETE FROM placements WHERE planting_id = ?", (planting_id,))
             cur = conn.execute("DELETE FROM plantings WHERE id = ?", (planting_id,))
             return cur.rowcount > 0
+
+    # ------------------------------------------------------------------
+    # Phenology (cached growing-calendar data per plant)
+    # ------------------------------------------------------------------
+
+    def get_phenology(self, plant_ids: list[int]) -> dict[int, dict]:
+        """Return cached phenology keyed by plant_id for the given IDs."""
+        if not plant_ids:
+            return {}
+        placeholders = ",".join("?" * len(plant_ids))
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM plant_phenology WHERE plant_id IN ({placeholders})",
+                plant_ids,
+            ).fetchall()
+        result = {}
+        for r in rows:
+            d = dict(r)
+            import json as _json
+            raw = d.get("pollinators")
+            d["pollinators"] = _json.loads(raw) if raw else []
+            result[d["plant_id"]] = d
+        return result
+
+    def save_phenology(self, plant_id: int, data: dict) -> None:
+        """Persist phenology data for one plant (upsert)."""
+        import json as _json
+        pollinators = _json.dumps(data.get("pollinators") or [])
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO plant_phenology
+                   (plant_id, plant_type, start_indoors_week, direct_sow_week,
+                    transplant_week, harvest_start_week, harvest_end_week,
+                    bloom_start_week, bloom_end_week, bloom_color, pollinators, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(plant_id) DO UPDATE SET
+                     plant_type = excluded.plant_type,
+                     start_indoors_week = excluded.start_indoors_week,
+                     direct_sow_week = excluded.direct_sow_week,
+                     transplant_week = excluded.transplant_week,
+                     harvest_start_week = excluded.harvest_start_week,
+                     harvest_end_week = excluded.harvest_end_week,
+                     bloom_start_week = excluded.bloom_start_week,
+                     bloom_end_week = excluded.bloom_end_week,
+                     bloom_color = excluded.bloom_color,
+                     pollinators = excluded.pollinators""",
+                (
+                    plant_id,
+                    data.get("plant_type"),
+                    data.get("start_indoors_week"),
+                    data.get("direct_sow_week"),
+                    data.get("transplant_week"),
+                    data.get("harvest_start_week"),
+                    data.get("harvest_end_week"),
+                    data.get("bloom_start_week"),
+                    data.get("bloom_end_week"),
+                    data.get("bloom_color"),
+                    pollinators,
+                    _utcnow(),
+                ),
+            )
+
+    # ------------------------------------------------------------------
+    # Settings (simple key/value for user-configurable values)
+    # ------------------------------------------------------------------
+
+    def get_setting(self, key: str) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM loam_settings WHERE key = ?", (key,)
+            ).fetchone()
+            return row["value"] if row else None
+
+    def set_setting(self, key: str, value: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO loam_settings (key, value) VALUES (?, ?)"
+                " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+
+    # ------------------------------------------------------------------
+    # Calendar grouping
+    # ------------------------------------------------------------------
+
+    def get_calendar_plants(self) -> dict:
+        """Return all plants split into three groups for the calendar view.
+
+        - garden:  plants with at least one active planting
+        - wishlist: plants with wishlist=1 that are NOT currently in the garden
+        - library:  remaining saved plants (no active planting, not wishlisted)
+
+        Each plant appears in exactly one group.
+        """
+        with self._connect() as conn:
+            garden_rows = conn.execute(
+                """SELECT DISTINCT p.* FROM plants p
+                   JOIN plantings pl ON pl.plant_id = p.id AND pl.status = 'active'
+                   ORDER BY p.name"""
+            ).fetchall()
+
+            non_garden = conn.execute(
+                """SELECT * FROM plants
+                   WHERE id NOT IN (
+                       SELECT DISTINCT plant_id FROM plantings WHERE status = 'active'
+                   )
+                   ORDER BY name"""
+            ).fetchall()
+
+        wishlist_rows = [r for r in non_garden if r["wishlist"]]
+        library_rows  = [r for r in non_garden if not r["wishlist"]]
+
+        return {
+            "garden":   [dict(r) for r in garden_rows],
+            "wishlist": [dict(r) for r in wishlist_rows],
+            "library":  [dict(r) for r in library_rows],
+        }

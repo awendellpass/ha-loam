@@ -14,6 +14,8 @@ PERMAPEOPLE_API_URL = "https://permapeople.org/api/search"
 CONF_PERMAPEOPLE_KEY_ID = "permapeople_key_id"
 CONF_PERMAPEOPLE_KEY_SECRET = "permapeople_key_secret"
 CONF_OLLAMA_HOST = "ollama_host"
+# Optional: override the frost date set via the UI (MM-DD, e.g. "05-07").
+CONF_FROST_DATE = "frost_date"
 
 # Ollama model used for companion-planting classification and days-to-maturity
 # estimates (Permapeople's feed carries neither). Ollama runs locally on forge.

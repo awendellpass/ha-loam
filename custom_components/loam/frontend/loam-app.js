@@ -85,7 +85,8 @@
       document.getElementById(`tab-${tab.dataset.tab}`).classList.add("active");
 
       if (tab.dataset.tab === "plantings") renderPlantings();
-      if (tab.dataset.tab === "garden") loadGardenBoard();
+      if (tab.dataset.tab === "garden")    loadGardenBoard();
+      if (tab.dataset.tab === "calendar")  loadCalendar();
     });
   });
 
@@ -490,7 +491,10 @@
             <div class="plant-card-name">${escapeHtml(p.name)}</div>
             ${p.scientific_name ? `<div class="plant-card-latin">${escapeHtml(p.scientific_name)}</div>` : ""}
           </div>
-          <button class="btn btn-danger btn-sm" data-delete-plant="${p.id}">✕</button>
+          <div style="display:flex;align-items:center;gap:4px">
+            <button class="wishlist-btn${p.wishlist ? " wishlisted" : ""}" data-wishlist-plant="${p.id}" title="${p.wishlist ? "Remove from wishlist" : "Add to calendar wishlist"}">${p.wishlist ? "★" : "☆"}</button>
+            <button class="btn btn-danger btn-sm" data-delete-plant="${p.id}">✕</button>
+          </div>
         </div>
         <div class="edit-row">
           <label>Days to maturity</label>
@@ -501,6 +505,24 @@
         ${p.is_custom ? '<div class="plant-card-meta" style="color:#66bb6a">Custom</div>' : ""}
       </div>
     `).join("");
+
+    el.querySelectorAll("[data-wishlist-plant]").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const pid = btn.dataset.wishlistPlant;
+        const plant = state.plants.find(x => String(x.id) === pid);
+        if (!plant) return;
+        const newVal = !plant.wishlist;
+        try {
+          const updated = await put(`/plants/${pid}`, { wishlist: newVal });
+          plant.wishlist = updated.wishlist;
+          btn.textContent = plant.wishlist ? "★" : "☆";
+          btn.classList.toggle("wishlisted", !!plant.wishlist);
+          btn.title = plant.wishlist ? "Remove from wishlist" : "Add to calendar wishlist";
+        } catch (e) {
+          alert(e.message);
+        }
+      });
+    });
 
     el.querySelectorAll("[data-delete-plant]").forEach(btn => {
       btn.addEventListener("click", async () => {
@@ -804,6 +826,255 @@
       });
     });
   }
+
+  // ── Calendar ─────────────────────────────────────────────────────────────────
+  // Display range: March 1 → October 31 (245 days).
+  // All months calculated for a non-leap year; close enough for display positioning.
+  const CAL_MONTHS = [
+    { name: "Mar", doy: 60,  days: 31 },
+    { name: "Apr", doy: 91,  days: 30 },
+    { name: "May", doy: 121, days: 31 },
+    { name: "Jun", doy: 152, days: 30 },
+    { name: "Jul", doy: 182, days: 31 },
+    { name: "Aug", doy: 213, days: 31 },
+    { name: "Sep", doy: 244, days: 30 },
+    { name: "Oct", doy: 274, days: 31 },
+  ];
+  const CAL_START = 60;   // March 1 day-of-year
+  const CAL_END   = 305;  // November 1 day-of-year (exclusive)
+  const CAL_DAYS  = CAL_END - CAL_START; // 245
+
+  function doyFromDate(year, month, day) {
+    const d = new Date(year, month - 1, day);
+    return Math.round((d - new Date(year, 0, 1)) / 86400000) + 1;
+  }
+
+  function frostDoy(frostMd, year) {
+    const [mm, dd] = frostMd.split("-").map(Number);
+    return doyFromDate(year, mm, dd);
+  }
+
+  function weekToPct(weekOffset, fdoy) {
+    const doy = fdoy + weekOffset * 7;
+    return Math.max(0, Math.min(100, (doy - CAL_START) / CAL_DAYS * 100));
+  }
+
+  function todayPct() {
+    const t = new Date();
+    const doy = doyFromDate(t.getFullYear(), t.getMonth() + 1, t.getDate());
+    if (doy < CAL_START || doy > CAL_END) return null;
+    return (doy - CAL_START) / CAL_DAYS * 100;
+  }
+
+  // Shared month-grid HTML injected into each bars area.
+  function monthGridHtml() {
+    return CAL_MONTHS.slice(1).map(m => {
+      const pct = ((m.doy - CAL_START) / CAL_DAYS * 100).toFixed(2);
+      return `<div class="cal-grid-line" style="left:${pct}%"></div>`;
+    }).join("");
+  }
+
+  function barsHtml(ph, fdoy) {
+    if (!ph) {
+      return '<div class="cal-bar pending"></div>';
+    }
+    const bars = [];
+
+    // Start-indoors bar: from start_indoors_week → first outdoor event.
+    if (ph.start_indoors_week != null) {
+      const endW = ph.transplant_week ?? ph.direct_sow_week;
+      if (endW != null && endW > ph.start_indoors_week) {
+        const l = weekToPct(ph.start_indoors_week, fdoy);
+        const r = weekToPct(endW, fdoy);
+        if (r > l) bars.push(`<div class="cal-bar indoor" style="left:${l.toFixed(1)}%;width:${(r-l).toFixed(1)}%"></div>`);
+      }
+    }
+
+    // Plant/transplant bar: outdoor planting → harvest or bloom start.
+    const plantW = ph.transplant_week ?? ph.direct_sow_week;
+    const plantEndW = ph.harvest_start_week ?? ph.bloom_start_week;
+    if (plantW != null && plantEndW != null && plantEndW > plantW) {
+      const l = weekToPct(plantW, fdoy);
+      const r = weekToPct(plantEndW, fdoy);
+      if (r > l) bars.push(`<div class="cal-bar plant" style="left:${l.toFixed(1)}%;width:${(r-l).toFixed(1)}%"></div>`);
+    }
+
+    // Harvest bar.
+    if (ph.harvest_start_week != null && ph.harvest_end_week != null) {
+      const l = weekToPct(ph.harvest_start_week, fdoy);
+      const r = weekToPct(ph.harvest_end_week, fdoy);
+      if (r > l) bars.push(`<div class="cal-bar harvest" style="left:${l.toFixed(1)}%;width:${(r-l).toFixed(1)}%"></div>`);
+    }
+
+    // Bloom bar (ornamentals — color from Ollama).
+    if (ph.bloom_start_week != null && ph.bloom_end_week != null) {
+      const l = weekToPct(ph.bloom_start_week, fdoy);
+      const r = weekToPct(ph.bloom_end_week, fdoy);
+      if (r > l) {
+        const color = ph.bloom_color || "#9c27b0";
+        bars.push(`<div class="cal-bar" style="left:${l.toFixed(1)}%;width:${(r-l).toFixed(1)}%;background:${escapeHtml(color)}"></div>`);
+      }
+    }
+
+    if (!bars.length) bars.push('<div class="cal-bar pending"></div>');
+    return bars.join("");
+  }
+
+  function renderCalendar(calData) {
+    const body = document.getElementById("cal-body");
+    const { frost_date, frost_from_config, sections } = calData;
+
+    // Update frost display in header.
+    document.getElementById("cal-frost-display").textContent = frost_date || "—";
+    const fromCfg = document.getElementById("cal-frost-from-config");
+    fromCfg.style.display = frost_from_config ? "inline" : "none";
+    document.getElementById("btn-edit-frost").style.display = frost_from_config ? "none" : "inline-block";
+
+    if (!frost_date) {
+      body.innerHTML = `
+        <div class="cal-no-frost">
+          <strong>Set your last frost date to see the calendar.</strong><br/>
+          Click <strong>Edit</strong> above and enter your last spring frost date (MM-DD).<br/>
+          For the Twin Cities, that's usually <strong>05-07</strong>.
+        </div>`;
+      return;
+    }
+
+    const year = new Date().getFullYear();
+    const fdoy = frostDoy(frost_date, year);
+    const tPct  = todayPct();
+
+    const todayLine = tPct != null
+      ? `<div class="cal-today-line" style="left:${tPct.toFixed(2)}%"></div>`
+      : "";
+    const grid = monthGridHtml();
+
+    // Month header row.
+    const monthsHtml = CAL_MONTHS.map(m => {
+      const w = (m.days / CAL_DAYS * 100).toFixed(2);
+      return `<div class="cal-month-cell" style="width:${w}%">${m.name}</div>`;
+    }).join("");
+
+    function plantRowHtml(p) {
+      const wl = p.wishlist;
+      return `
+        <div class="cal-row">
+          <div class="cal-plant-name">
+            <button class="cal-wishlist-btn${wl ? " wishlisted" : ""}"
+                    data-cal-wishlist="${p.id}"
+                    title="${wl ? "Remove from wishlist" : "Add to wishlist"}">${wl ? "★" : "☆"}</button>
+            <span class="cal-plant-name-text" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>
+          </div>
+          <div class="cal-bars-area" data-plant-bars="${p.id}">
+            ${grid}${todayLine}${barsHtml(p.phenology, fdoy)}
+          </div>
+        </div>`;
+    }
+
+    const allPlants = sections.flatMap(s => s.plants);
+    const hasAny = allPlants.length > 0;
+
+    let html = `
+      <div class="cal-inner">
+        <div class="cal-month-row">
+          <div class="cal-name-col"></div>
+          <div class="cal-months-header">${monthsHtml}</div>
+        </div>`;
+
+    if (!hasAny) {
+      html += '<div class="cal-empty-state">No plants yet — add some in Plants &amp; Plantings to see the calendar.</div>';
+    } else {
+      sections.forEach(s => {
+        if (!s.plants.length) return;
+        html += `
+          <div class="cal-section-header">
+            <div class="cal-section-label">${s.label}</div>
+            <div class="cal-section-line"></div>
+          </div>
+          ${s.plants.map(plantRowHtml).join("")}`;
+      });
+    }
+
+    html += "</div>";
+    body.innerHTML = html;
+
+    // Wishlist toggles.
+    body.querySelectorAll("[data-cal-wishlist]").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const pid = btn.dataset.calWishlist;
+        const plant = allPlants.find(p => String(p.id) === pid);
+        if (!plant) return;
+        try {
+          const updated = await put(`/plants/${pid}`, { wishlist: !plant.wishlist });
+          plant.wishlist = updated.wishlist;
+          btn.textContent = plant.wishlist ? "★" : "☆";
+          btn.classList.toggle("wishlisted", !!plant.wishlist);
+          btn.title = plant.wishlist ? "Remove from wishlist" : "Add to wishlist";
+        } catch (e) {
+          alert(e.message);
+        }
+      });
+    });
+
+    // Fill in phenology for uncached plants, one at a time.
+    const uncached = allPlants.filter(p => !p.phenology);
+    if (uncached.length) estimatePhenologySequential(uncached, fdoy, todayLine, grid);
+  }
+
+  async function estimatePhenologySequential(plants, fdoy, todayLine, grid) {
+    for (const plant of plants) {
+      const barsArea = document.querySelector(`[data-plant-bars="${plant.id}"]`);
+      if (!barsArea) continue;
+      try {
+        const result = await post("/phenology", { plant_id: plant.id });
+        plant.phenology = result.phenology;
+        if (barsArea) {
+          barsArea.innerHTML = grid + todayLine + barsHtml(plant.phenology, fdoy);
+        }
+      } catch (_e) {
+        // Leave the pending pulse — phenology unavailable for this plant.
+      }
+    }
+  }
+
+  async function loadCalendar() {
+    document.getElementById("cal-body").innerHTML =
+      '<div class="cal-empty-state">Loading…</div>';
+    try {
+      const calData = await get("/calendar");
+      renderCalendar(calData);
+    } catch (e) {
+      document.getElementById("cal-body").innerHTML =
+        `<div class="cal-empty-state">Error loading calendar: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // Frost date edit controls.
+  document.getElementById("btn-edit-frost").addEventListener("click", () => {
+    document.getElementById("cal-frost-edit-row").style.display = "flex";
+    document.getElementById("cal-frost-input").focus();
+  });
+
+  document.getElementById("btn-cancel-frost").addEventListener("click", () => {
+    document.getElementById("cal-frost-edit-row").style.display = "none";
+  });
+
+  document.getElementById("btn-save-frost").addEventListener("click", async () => {
+    const val = document.getElementById("cal-frost-input").value.trim();
+    if (!val) return;
+    try {
+      await put("/settings", { frost_date: val });
+      document.getElementById("cal-frost-edit-row").style.display = "none";
+      await loadCalendar();
+    } catch (e) {
+      alert("Invalid frost date: " + e.message);
+    }
+  });
+
+  document.getElementById("cal-frost-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") document.getElementById("btn-save-frost").click();
+    if (e.key === "Escape") document.getElementById("btn-cancel-frost").click();
+  });
 
   // ── Boot ───────────────────────────────────────────────────────────────────
   async function boot() {

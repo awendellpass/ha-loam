@@ -619,6 +619,256 @@
       padding: 4px 0 10px;
       line-height: 1.4;
     }
+
+    /* ── Calendar tab ── */
+    #tab-calendar { flex-direction: column; }
+
+    .cal-header {
+      padding: 12px 16px 10px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+
+    .cal-frost-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .cal-frost-label { font-size: 13px; color: var(--text-muted); }
+    .cal-frost-value { font-size: 13px; font-weight: 600; }
+
+    .cal-frost-input {
+      width: 90px;
+      padding: 4px 8px;
+      font-size: 13px;
+    }
+
+    .cal-legend {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .legend-swatch {
+      width: 18px;
+      height: 8px;
+      border-radius: 2px;
+      flex-shrink: 0;
+      display: inline-block;
+    }
+
+    /* Calendar body scrolls vertically; name column is sticky left */
+    .cal-body {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: auto;
+    }
+
+    .cal-inner { min-width: 560px; }
+
+    /* Sticky month header row */
+    .cal-month-row {
+      display: flex;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: var(--surface);
+      border-bottom: 2px solid var(--border);
+    }
+
+    .cal-name-col {
+      width: 180px;
+      min-width: 180px;
+      flex-shrink: 0;
+      border-right: 1px solid var(--border);
+    }
+
+    .cal-months-header {
+      flex: 1;
+      display: flex;
+      position: relative;
+    }
+
+    .cal-month-cell {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      padding: 7px 0 5px 5px;
+      border-right: 1px solid var(--border);
+      overflow: hidden;
+      white-space: nowrap;
+      box-sizing: border-box;
+    }
+
+    .cal-section-header {
+      display: flex;
+      align-items: center;
+      padding: 10px 0 3px;
+      background: var(--bg);
+    }
+
+    .cal-section-label {
+      width: 180px;
+      min-width: 180px;
+      flex-shrink: 0;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+      padding: 0 12px;
+      border-right: 1px solid var(--border);
+    }
+
+    .cal-section-line {
+      flex: 1;
+      border-top: 1px solid var(--border);
+      margin-right: 0;
+    }
+
+    .cal-row {
+      display: flex;
+      align-items: stretch;
+      min-height: 30px;
+      border-top: 1px solid rgba(255,255,255,0.04);
+    }
+
+    .cal-row:hover { background: rgba(255,255,255,0.02); }
+
+    .cal-plant-name {
+      width: 180px;
+      min-width: 180px;
+      flex-shrink: 0;
+      font-size: 13px;
+      padding: 0 6px 0 10px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      overflow: hidden;
+      border-right: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    .cal-plant-name-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .cal-bars-area {
+      flex: 1;
+      position: relative;
+      min-height: 30px;
+    }
+
+    /* Month grid lines inside the bars area */
+    .cal-grid-line {
+      position: absolute;
+      top: 0; bottom: 0;
+      width: 1px;
+      background: var(--border);
+      opacity: 0.5;
+      pointer-events: none;
+    }
+
+    /* Today marker */
+    .cal-today-line {
+      position: absolute;
+      top: 0; bottom: 0;
+      width: 2px;
+      background: var(--accent);
+      opacity: 0.55;
+      pointer-events: none;
+      z-index: 3;
+    }
+
+    /* Phase bars */
+    .cal-bar {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      height: 11px;
+      border-radius: 3px;
+      min-width: 3px;
+      z-index: 2;
+    }
+
+    .cal-bar.indoor  { background: #81c784; }
+    .cal-bar.plant   { background: #2e7d32; }
+    .cal-bar.harvest { background: #f9a825; }
+    .cal-bar.pending {
+      background: var(--surface2);
+      width: calc(100% - 16px);
+      left: 8px;
+      opacity: 0.6;
+      animation: cal-pulse 1.4s ease-in-out infinite;
+    }
+
+    @keyframes cal-pulse {
+      0%, 100% { opacity: 0.25; }
+      50%       { opacity: 0.6;  }
+    }
+
+    /* Wishlist star in calendar plant name */
+    .cal-wishlist-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 13px;
+      padding: 0;
+      line-height: 1;
+      color: var(--text-muted);
+      flex-shrink: 0;
+      transition: color 0.15s;
+    }
+
+    .cal-wishlist-btn:hover       { color: #f9a825; }
+    .cal-wishlist-btn.wishlisted  { color: #f9a825; }
+
+    /* Wishlist star in plant library cards */
+    .wishlist-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 0 2px;
+      line-height: 1;
+      color: var(--text-muted);
+      transition: color 0.15s;
+      flex-shrink: 0;
+    }
+
+    .wishlist-btn:hover      { color: #f9a825; }
+    .wishlist-btn.wishlisted { color: #f9a825; }
+
+    .cal-empty-state {
+      text-align: center;
+      padding: 48px 24px;
+      color: var(--text-muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .cal-no-frost {
+      text-align: center;
+      padding: 48px 24px;
+      color: var(--text-muted);
+      font-size: 13px;
+      line-height: 1.8;
+    }
   </style>
 </head>
 <body>
@@ -626,6 +876,7 @@
   <div class="tabs">
     <div class="tab active" data-tab="garden">Garden</div>
     <div class="tab" data-tab="plantings">Plants &amp; Plantings</div>
+    <div class="tab" data-tab="calendar">Calendar</div>
   </div>
 
   <!-- ── Garden Tab ── -->
@@ -718,6 +969,34 @@
         </div>
       </div>
       <div class="plantings-scroll" id="plantings-list"></div>
+    </div>
+  </div>
+
+  <!-- ── Calendar Tab ── -->
+  <div id="tab-calendar" class="tab-content">
+    <div class="cal-header">
+      <div class="cal-frost-row">
+        <span class="cal-frost-label">Last frost:</span>
+        <span class="cal-frost-value" id="cal-frost-display">—</span>
+        <button class="btn btn-ghost btn-sm" id="btn-edit-frost">Edit</button>
+        <span id="cal-frost-from-config" style="display:none;font-size:11px;color:var(--text-muted)">(set in configuration.yaml)</span>
+      </div>
+      <div id="cal-frost-edit-row" style="display:none;align-items:center;gap:8px;margin-bottom:8px">
+        <label style="font-size:12px;color:var(--text-muted)">MM-DD</label>
+        <input type="text" id="cal-frost-input" class="cal-frost-input" placeholder="05-07" maxlength="5" />
+        <button class="btn btn-primary btn-sm" id="btn-save-frost">Save</button>
+        <button class="btn btn-ghost btn-sm" id="btn-cancel-frost">Cancel</button>
+      </div>
+      <div class="cal-legend">
+        <span class="legend-item"><span class="legend-swatch" style="background:#81c784"></span>Start indoors</span>
+        <span class="legend-item"><span class="legend-swatch" style="background:#2e7d32"></span>Plant / transplant</span>
+        <span class="legend-item"><span class="legend-swatch" style="background:#f9a825"></span>Harvest</span>
+        <span class="legend-item"><span class="legend-swatch" style="background:linear-gradient(90deg,#f06292,#ab47bc,#9c27b0)"></span>Bloom (color = flower)</span>
+        <span class="legend-item cal-today-legend"><span style="display:inline-block;width:2px;height:14px;background:var(--accent);border-radius:1px;vertical-align:middle;margin-right:4px"></span>Today</span>
+      </div>
+    </div>
+    <div class="cal-body" id="cal-body">
+      <div class="cal-empty-state">Loading calendar…</div>
     </div>
   </div>
 
