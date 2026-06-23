@@ -655,6 +655,17 @@ class LoamPhenologyView(HomeAssistantView):
         ) if k in metadata}
 
         await hass.async_add_executor_job(db.save_phenology, pid, phenology_data)
+
+        # If Ollama returned a proper common name that differs from what's stored
+        # (Permapeople sometimes uses Latin as the primary name), fix it in place.
+        common = metadata.get("common_name", "")
+        if common and common.lower() != plant["name"].lower():
+            sci = metadata.get("scientific_name") if not plant.get("scientific_name") else None
+            await hass.async_add_executor_job(
+                db.update_plant, pid, None, None, common, sci
+            )
+            phenology_data["_name_updated"] = common
+
         return _json({"plant_id": pid, "phenology": phenology_data})
 
 

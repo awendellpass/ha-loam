@@ -392,9 +392,16 @@ class LoamDatabase:
             return dict(row)
 
     def update_plant(self, plant_id: int, days_to_maturity_min: int | None = None,
-                     wishlist: bool | None = None) -> dict | None:
+                     wishlist: bool | None = None, name: str | None = None,
+                     scientific_name: str | None = None) -> dict | None:
         with self._connect() as conn:
             updates, params = [], []
+            if name is not None:
+                updates.append("name = ?")
+                params.append(name)
+            if scientific_name is not None:
+                updates.append("scientific_name = ?")
+                params.append(scientific_name)
             if days_to_maturity_min is not None:
                 updates.append("days_to_maturity_min = ?")
                 params.append(days_to_maturity_min)

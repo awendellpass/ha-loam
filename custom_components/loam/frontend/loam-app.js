@@ -1028,8 +1028,16 @@
       try {
         const result = await post("/phenology", { plant_id: plant.id });
         plant.phenology = result.phenology;
-        if (barsArea) {
-          barsArea.innerHTML = grid + todayLine + barsHtml(plant.phenology, fdoy);
+        barsArea.innerHTML = grid + todayLine + barsHtml(plant.phenology, fdoy);
+        // If Ollama corrected a Latin name to a common name, update the row label.
+        const correctedName = result.phenology._name_updated;
+        if (correctedName) {
+          plant.name = correctedName;
+          const nameSpan = barsArea.parentElement.querySelector(".cal-plant-name-text");
+          if (nameSpan) {
+            nameSpan.textContent = correctedName;
+            nameSpan.title = correctedName;
+          }
         }
       } catch (_e) {
         // Leave the pending pulse — phenology unavailable for this plant.
