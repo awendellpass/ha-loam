@@ -1071,6 +1071,12 @@
     return `<div class="cal-bar plant" style="left:${l.toFixed(1)}%;width:${(r - l).toFixed(1)}%"></div>`;
   }
 
+  const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  function mdToLabel(md) {
+    const [mm, dd] = md.split("-").map(Number);
+    return `${MONTH_NAMES[mm - 1]} ${dd}`;
+  }
+
   function lawnRowHtml(lawn) {
     const grid = monthGridHtml();
     const tPct = todayPct();
@@ -1080,6 +1086,10 @@
       ? lawnBarHtml(lawn.spring_start, lawn.spring_end) + lawnBarHtml(lawn.fall_start, lawn.fall_end)
       : '<div class="cal-bar pending"></div>';
     const tip = lawn.available ? lawn.message : "Grass-seed timing unavailable — couldn't reach Open-Meteo.";
+    const caption = lawn.available
+      ? `Spring: ${mdToLabel(lawn.spring_start)}–${mdToLabel(lawn.spring_end)}` +
+        ` &nbsp;·&nbsp; Fall: ${mdToLabel(lawn.fall_start)}–${mdToLabel(lawn.fall_end)}`
+      : "Couldn't reach Open-Meteo for soil-temperature data.";
 
     return `
       <div class="cal-section-header">
@@ -1089,7 +1099,8 @@
       <div class="cal-row" title="${escapeHtml(tip)}">
         <div class="cal-plant-name"><span class="cal-plant-name-text">Grass seed</span></div>
         <div class="cal-bars-area">${grid}${todayLine}${bars}</div>
-      </div>`;
+      </div>
+      <div class="cal-lawn-caption">${caption}</div>`;
   }
 
   async function loadLawn() {

@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta, timezone
 import requests
 
 from .const import (
+    LAWN_ALGO_VERSION,
     LAWN_HISTORICAL_YEARS,
     LAWN_SOIL_TEMP_MAX_F,
     LAWN_SOIL_TEMP_MIN_F,
@@ -259,13 +260,13 @@ def _ordered_month_days() -> list[str]:
     return [(start + timedelta(days=i)).strftime("%m-%d") for i in range(365)]
 
 
-def _find_band_run(values: list[float], lo: float, hi: float, prefer_last: bool) -> tuple[int, int] | None:
-    """Find contiguous index runs where lo <= value <= hi; return one run.
+def _find_band_run(values: list[float], lo: float, hi: float) -> tuple[int, int] | None:
+    """Find the longest contiguous run of indices where lo <= value <= hi.
 
-    `prefer_last` picks the run closest to the end of the slice (used for the
-    spring window, which should be the crossing closest to the summer peak);
-    otherwise the run closest to the start (used for the fall window, the
-    crossing right after the peak).
+    Real soil-temperature curves wobble right at the band edges (a day or two
+    dips back into range during the transition), which produces several short
+    spurious runs alongside the one real sustained window — picking the
+    first or last run grabs a noise blip instead, so we pick the longest.
     """
     runs = []
     i = 0
@@ -280,7 +281,7 @@ def _find_band_run(values: list[float], lo: float, hi: float, prefer_last: bool)
             i += 1
     if not runs:
         return None
-    return runs[-1] if prefer_last else runs[0]
+    return max(runs, key=lambda r: r[1] - r[0])
 
 
 def fetch_soil_temp_normals(lat: float, lon: float) -> dict:
@@ -326,8 +327,8 @@ def fetch_soil_temp_normals(lat: float, lon: float) -> dict:
         raise ValueError("Incomplete soil-temperature history from Open-Meteo")
 
     peak_idx = curve.index(max(curve))
-    spring_run = _find_band_run(curve[: peak_idx + 1], LAWN_SOIL_TEMP_MIN_F, LAWN_SOIL_TEMP_MAX_F, prefer_last=True)
-    fall_run = _find_band_run(curve[peak_idx:], LAWN_SOIL_TEMP_MIN_F, LAWN_SOIL_TEMP_MAX_F, prefer_last=False)
+    spring_run = _find_band_run(curve[: peak_idx + 1], LAWN_SOIL_TEMP_MIN_F, LAWN_SOIL_TEMP_MAX_F)
+    fall_run = _find_band_run(curve[peak_idx:], LAWN_SOIL_TEMP_MIN_F, LAWN_SOIL_TEMP_MAX_F)
 
     def _md(idx: int | None, offset: int = 0) -> str | None:
         return ordered[idx + offset] if idx is not None else None
@@ -338,6 +339,7 @@ def fetch_soil_temp_normals(lat: float, lon: float) -> dict:
         "fall_start": _md(fall_run[0] if fall_run else None, offset=peak_idx),
         "fall_end": _md(fall_run[1] if fall_run else None, offset=peak_idx),
         "computed_at": datetime.now(timezone.utc).isoformat(),
+        "version": LAWN_ALGO_VERSION,
     }
 
 

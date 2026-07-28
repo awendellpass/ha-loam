@@ -14,6 +14,7 @@ from homeassistant.core import HomeAssistant
 from .const import (
     DOMAIN,
     GARDEN_TYPES,
+    LAWN_ALGO_VERSION,
     LAWN_CACHE_MAX_AGE_DAYS,
     LAWN_SOIL_TEMP_MAX_F,
     LAWN_SOIL_TEMP_MIN_F,
@@ -813,6 +814,7 @@ class LoamLawnView(HomeAssistantView):
         windows = await hass.async_add_executor_job(db.get_lawn_windows)
         stale = (
             windows is None
+            or windows.get("version") != LAWN_ALGO_VERSION
             or datetime.now(timezone.utc) - datetime.fromisoformat(windows["computed_at"])
             > timedelta(days=LAWN_CACHE_MAX_AGE_DAYS)
         )
