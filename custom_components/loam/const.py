@@ -59,4 +59,4 @@ LAWN_CACHE_MAX_AGE_DAYS = 180
 
 # Bump whenever the window-detection algorithm changes so cached windows from
 # an older version are treated as stale and recomputed automatically.
-LAWN_ALGO_VERSION = 2
+LAWN_ALGO_VERSION = 3

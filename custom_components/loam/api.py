@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import statistics
 from datetime import date, datetime, timedelta, timezone
 
 import requests
@@ -287,11 +288,18 @@ def _find_band_run(values: list[float], lo: float, hi: float) -> tuple[int, int]
 def fetch_soil_temp_normals(lat: float, lon: float) -> dict:
     """Compute historical spring/fall grass-seeding windows for a location.
 
-    Averages `LAWN_HISTORICAL_YEARS` of hourly ERA5-Land soil temperature
-    (0-7cm layer) by calendar day to build a smoothed annual curve, then finds
-    where that curve crosses the cool-season germination band (50-65F): once
-    warming in spring, once cooling in fall. Raises on network/parsing errors
-    so the caller can degrade gracefully.
+    For each of the last `LAWN_HISTORICAL_YEARS` years, builds that year's own
+    daily soil-temperature curve (ERA5-Land, 0-7cm layer) and finds where it
+    crosses the cool-season germination band (50-65F): once warming in
+    spring, once cooling in fall. The window reported is the **median**
+    crossing date across years, not the crossing of an averaged curve —
+    individual years cross the band at quite different calendar dates (a
+    mild fall can run three weeks later than a cold one), so averaging
+    temperatures first and then finding the crossing smears those different
+    dates into one long, artificially wide window. Taking the median date
+    per year keeps each year's transition sharp and reports the typical
+    timing. Raises on network/parsing errors so the caller can degrade
+    gracefully.
     """
     end_year = date.today().year - 1
     start_year = end_year - LAWN_HISTORICAL_YEARS + 1
@@ -312,32 +320,48 @@ def fetch_soil_temp_normals(lat: float, lon: float) -> dict:
     resp.raise_for_status()
     data = resp.json()["hourly"]
 
-    buckets: dict[str, list[float]] = {}
+    by_year_day: dict[str, dict[str, list[float]]] = {}
     for ts, temp in zip(data["time"], data["soil_temperature_0_to_7cm"]):
         if temp is None:
             continue
-        md = ts[5:10]  # "YYYY-MM-DDTHH:MM" -> "MM-DD"
+        year, md = ts[:4], ts[5:10]  # "YYYY-MM-DDTHH:MM"
         if md == "02-29":
             continue
-        buckets.setdefault(md, []).append(temp)
+        by_year_day.setdefault(year, {}).setdefault(md, []).append(temp)
 
     ordered = _ordered_month_days()
-    curve = [sum(buckets[md]) / len(buckets[md]) if buckets.get(md) else None for md in ordered]
-    if any(v is None for v in curve):
-        raise ValueError("Incomplete soil-temperature history from Open-Meteo")
+    spring_starts, spring_ends, fall_starts, fall_ends = [], [], [], []
 
-    peak_idx = curve.index(max(curve))
-    spring_run = _find_band_run(curve[: peak_idx + 1], LAWN_SOIL_TEMP_MIN_F, LAWN_SOIL_TEMP_MAX_F)
-    fall_run = _find_band_run(curve[peak_idx:], LAWN_SOIL_TEMP_MIN_F, LAWN_SOIL_TEMP_MAX_F)
+    for day_buckets in by_year_day.values():
+        curve = [
+            sum(day_buckets[md]) / len(day_buckets[md]) if day_buckets.get(md) else None
+            for md in ordered
+        ]
+        if any(v is None for v in curve):
+            continue  # incomplete year of data — skip rather than skew the median
 
-    def _md(idx: int | None, offset: int = 0) -> str | None:
-        return ordered[idx + offset] if idx is not None else None
+        peak_idx = curve.index(max(curve))
+        spring_run = _find_band_run(curve[: peak_idx + 1], LAWN_SOIL_TEMP_MIN_F, LAWN_SOIL_TEMP_MAX_F)
+        fall_run = _find_band_run(curve[peak_idx:], LAWN_SOIL_TEMP_MIN_F, LAWN_SOIL_TEMP_MAX_F)
+
+        if spring_run:
+            spring_starts.append(spring_run[0])
+            spring_ends.append(spring_run[1])
+        if fall_run:
+            fall_starts.append(peak_idx + fall_run[0])
+            fall_ends.append(peak_idx + fall_run[1])
+
+    if not spring_starts or not fall_starts:
+        raise ValueError("Not enough complete years of soil-temperature history from Open-Meteo")
+
+    def _median_md(indices: list[int]) -> str:
+        return ordered[round(statistics.median(indices))]
 
     return {
-        "spring_start": _md(spring_run[0] if spring_run else None),
-        "spring_end": _md(spring_run[1] if spring_run else None),
-        "fall_start": _md(fall_run[0] if fall_run else None, offset=peak_idx),
-        "fall_end": _md(fall_run[1] if fall_run else None, offset=peak_idx),
+        "spring_start": _median_md(spring_starts),
+        "spring_end": _median_md(spring_ends),
+        "fall_start": _median_md(fall_starts),
+        "fall_end": _median_md(fall_ends),
         "computed_at": datetime.now(timezone.utc).isoformat(),
         "version": LAWN_ALGO_VERSION,
     }
