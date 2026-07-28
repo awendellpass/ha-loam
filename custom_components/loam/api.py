@@ -3,10 +3,19 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import date, datetime, timedelta, timezone
 
 import requests
 
-from .const import OLLAMA_MODEL, PERMAPEOPLE_API_URL
+from .const import (
+    LAWN_HISTORICAL_YEARS,
+    LAWN_SOIL_TEMP_MAX_F,
+    LAWN_SOIL_TEMP_MIN_F,
+    OLLAMA_MODEL,
+    OPEN_METEO_ARCHIVE_URL,
+    OPEN_METEO_FORECAST_URL,
+    PERMAPEOPLE_API_URL,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -241,3 +250,137 @@ def classify_companions(pairs: list[dict], ollama_host: str) -> list[dict]:
             "relationship": relationship,
         })
     return results
+
+
+def _ordered_month_days() -> list[str]:
+    """Return ['01-01', '01-02', ..., '12-31'] — a fixed 365-day calendar,
+    Feb 29 excluded so leap years don't skew the year-to-year average."""
+    start = date(2001, 1, 1)  # 2001 is not a leap year
+    return [(start + timedelta(days=i)).strftime("%m-%d") for i in range(365)]
+
+
+def _find_band_run(values: list[float], lo: float, hi: float, prefer_last: bool) -> tuple[int, int] | None:
+    """Find contiguous index runs where lo <= value <= hi; return one run.
+
+    `prefer_last` picks the run closest to the end of the slice (used for the
+    spring window, which should be the crossing closest to the summer peak);
+    otherwise the run closest to the start (used for the fall window, the
+    crossing right after the peak).
+    """
+    runs = []
+    i = 0
+    while i < len(values):
+        if lo <= values[i] <= hi:
+            j = i
+            while j < len(values) and lo <= values[j] <= hi:
+                j += 1
+            runs.append((i, j - 1))
+            i = j
+        else:
+            i += 1
+    if not runs:
+        return None
+    return runs[-1] if prefer_last else runs[0]
+
+
+def fetch_soil_temp_normals(lat: float, lon: float) -> dict:
+    """Compute historical spring/fall grass-seeding windows for a location.
+
+    Averages `LAWN_HISTORICAL_YEARS` of hourly ERA5-Land soil temperature
+    (0-7cm layer) by calendar day to build a smoothed annual curve, then finds
+    where that curve crosses the cool-season germination band (50-65F): once
+    warming in spring, once cooling in fall. Raises on network/parsing errors
+    so the caller can degrade gracefully.
+    """
+    end_year = date.today().year - 1
+    start_year = end_year - LAWN_HISTORICAL_YEARS + 1
+
+    resp = requests.get(
+        OPEN_METEO_ARCHIVE_URL,
+        params={
+            "latitude": lat,
+            "longitude": lon,
+            "start_date": f"{start_year}-01-01",
+            "end_date": f"{end_year}-12-31",
+            "hourly": "soil_temperature_0_to_7cm",
+            "temperature_unit": "fahrenheit",
+            "timezone": "auto",
+        },
+        timeout=60,
+    )
+    resp.raise_for_status()
+    data = resp.json()["hourly"]
+
+    buckets: dict[str, list[float]] = {}
+    for ts, temp in zip(data["time"], data["soil_temperature_0_to_7cm"]):
+        if temp is None:
+            continue
+        md = ts[5:10]  # "YYYY-MM-DDTHH:MM" -> "MM-DD"
+        if md == "02-29":
+            continue
+        buckets.setdefault(md, []).append(temp)
+
+    ordered = _ordered_month_days()
+    curve = [sum(buckets[md]) / len(buckets[md]) if buckets.get(md) else None for md in ordered]
+    if any(v is None for v in curve):
+        raise ValueError("Incomplete soil-temperature history from Open-Meteo")
+
+    peak_idx = curve.index(max(curve))
+    spring_run = _find_band_run(curve[: peak_idx + 1], LAWN_SOIL_TEMP_MIN_F, LAWN_SOIL_TEMP_MAX_F, prefer_last=True)
+    fall_run = _find_band_run(curve[peak_idx:], LAWN_SOIL_TEMP_MIN_F, LAWN_SOIL_TEMP_MAX_F, prefer_last=False)
+
+    def _md(idx: int | None, offset: int = 0) -> str | None:
+        return ordered[idx + offset] if idx is not None else None
+
+    return {
+        "spring_start": _md(spring_run[0] if spring_run else None),
+        "spring_end": _md(spring_run[1] if spring_run else None),
+        "fall_start": _md(fall_run[0] if fall_run else None, offset=peak_idx),
+        "fall_end": _md(fall_run[1] if fall_run else None, offset=peak_idx),
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def fetch_live_soil_conditions(lat: float, lon: float) -> dict:
+    """Fetch today's soil temperature and the coming week's rain outlook.
+
+    Returns {"soil_temp_f": float, "precip_next_7d_in": float}. Raises on
+    network/parsing errors so the caller can degrade gracefully.
+    """
+    resp = requests.get(
+        OPEN_METEO_FORECAST_URL,
+        params={
+            "latitude": lat,
+            "longitude": lon,
+            "hourly": "soil_temperature_6cm",
+            "daily": "precipitation_sum",
+            "past_days": 1,
+            "forecast_days": 7,
+            "temperature_unit": "fahrenheit",
+            "precipitation_unit": "inch",
+            "timezone": "auto",
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    body = resp.json()
+
+    today = date.today().isoformat()
+    hourly = body["hourly"]
+    today_temps = [
+        t for ts, t in zip(hourly["time"], hourly["soil_temperature_6cm"])
+        if ts.startswith(today) and t is not None
+    ]
+    if not today_temps:
+        raise ValueError("No soil-temperature readings for today from Open-Meteo")
+
+    daily = body["daily"]
+    precip = sum(
+        p for d, p in zip(daily["time"], daily["precipitation_sum"])
+        if d >= today and p is not None
+    )
+
+    return {
+        "soil_temp_f": sum(today_temps) / len(today_temps),
+        "precip_next_7d_in": precip,
+    }

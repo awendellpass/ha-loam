@@ -1055,6 +1055,42 @@
       document.getElementById("cal-body").innerHTML =
         `<div class="cal-empty-state">Error loading calendar: ${escapeHtml(e.message)}</div>`;
     }
+    loadLawn();
+  }
+
+  const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  function mdToLabel(md) {
+    const [mm, dd] = md.split("-").map(Number);
+    return `${MONTH_NAMES[mm - 1]} ${dd}`;
+  }
+
+  async function loadLawn() {
+    const badge = document.getElementById("lawn-badge");
+    const message = document.getElementById("lawn-message");
+    const detail = document.getElementById("lawn-detail");
+    try {
+      const lawn = await get("/lawn");
+      if (!lawn.available) {
+        badge.className = "lawn-badge unavailable";
+        badge.textContent = "🌱 Grass seed timing unavailable";
+        message.textContent = "";
+        detail.textContent = "Couldn't reach Open-Meteo for soil-temperature data.";
+        return;
+      }
+      badge.className = `lawn-badge ${lawn.status === "in_window" ? "good" : "waiting"}`;
+      badge.textContent = lawn.status === "in_window"
+        ? "🌱 Good time to plant grass seed"
+        : "🌱 Grass seed timing";
+      message.textContent = lawn.message;
+      detail.textContent =
+        `Historical windows for your location — Spring: ${mdToLabel(lawn.spring_start)}–${mdToLabel(lawn.spring_end)}` +
+        ` · Fall: ${mdToLabel(lawn.fall_start)}–${mdToLabel(lawn.fall_end)}`;
+    } catch (e) {
+      badge.className = "lawn-badge unavailable";
+      badge.textContent = "🌱 Grass seed timing unavailable";
+      message.textContent = "";
+      detail.textContent = escapeHtml(e.message);
+    }
   }
 
   // Frost date edit controls.

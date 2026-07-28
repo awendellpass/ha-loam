@@ -653,6 +653,31 @@
       align-items: center;
     }
 
+    .lawn-card {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 8px 0;
+      margin-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .lawn-badge {
+      display: inline-block;
+      width: fit-content;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
+
+    .lawn-badge.good        { background: #1b5e20; color: #a5d6a7; }
+    .lawn-badge.waiting     { background: #37474f; color: #b0bec5; }
+    .lawn-badge.unavailable { background: #424242; color: #bdbdbd; }
+
+    .lawn-message { font-size: 13px; }
+    .lawn-detail  { font-size: 11px; color: var(--text-muted); }
+
     .legend-item {
       display: flex;
       align-items: center;
@@ -986,6 +1011,11 @@
         <input type="text" id="cal-frost-input" class="cal-frost-input" placeholder="05-07" maxlength="5" />
         <button class="btn btn-primary btn-sm" id="btn-save-frost">Save</button>
         <button class="btn btn-ghost btn-sm" id="btn-cancel-frost">Cancel</button>
+      </div>
+      <div class="lawn-card" id="lawn-card">
+        <span class="lawn-badge waiting" id="lawn-badge">🌱 Loading grass-seed timing…</span>
+        <span class="lawn-message" id="lawn-message"></span>
+        <span class="lawn-detail" id="lawn-detail"></span>
       </div>
       <div class="cal-legend">
         <span class="legend-item"><span class="legend-swatch" style="background:#81c784"></span>Start indoors</span>

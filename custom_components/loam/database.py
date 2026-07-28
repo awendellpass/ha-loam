@@ -1,6 +1,7 @@
 """SQLite database layer for Loam."""
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timezone
 
@@ -584,6 +585,23 @@ class LoamDatabase:
                 " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (key, value),
             )
+
+    # ------------------------------------------------------------------
+    # Lawn seeding windows (historical soil-temp normals, cached as JSON
+    # under the settings table — one row for the home location).
+    # ------------------------------------------------------------------
+
+    def get_lawn_windows(self) -> dict | None:
+        raw = self.get_setting("lawn_windows")
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except ValueError:
+            return None
+
+    def save_lawn_windows(self, windows: dict) -> None:
+        self.set_setting("lawn_windows", json.dumps(windows))
 
     # ------------------------------------------------------------------
     # Calendar grouping

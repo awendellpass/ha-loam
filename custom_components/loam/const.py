@@ -37,3 +37,22 @@ PLANTING_STATUSES = ["active", "harvested", "removed"]
 # Largest garden dimension (feet) allowed in either direction. Bounds the grid
 # canvas and validates bed footprints server-side.
 MAX_GARDEN_FT = 200
+
+# Open-Meteo (no API key required). Archive is ERA5-Land reanalysis for
+# historical soil-temp normals; Forecast is the live/short-term outlook. The
+# two use different soil-depth conventions (layer-mean vs. point depth), so
+# they carry different variable names in api.py.
+OPEN_METEO_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
+OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+
+# Cool-season lawn grass (bluegrass/fescue/rye) germinates best when soil
+# temperature at shallow depth is in this band (°F).
+LAWN_SOIL_TEMP_MIN_F = 50
+LAWN_SOIL_TEMP_MAX_F = 65
+
+# Years of historical hourly soil-temp data to average when computing the
+# spring/fall seeding windows for the home location.
+LAWN_HISTORICAL_YEARS = 10
+
+# Recompute the cached historical windows after this many days.
+LAWN_CACHE_MAX_AGE_DAYS = 180

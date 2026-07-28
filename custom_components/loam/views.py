@@ -4,13 +4,22 @@ from __future__ import annotations
 import itertools
 import json
 import logging
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN, GARDEN_TYPES, PLANTING_STATUSES, MAX_GARDEN_FT
+from .const import (
+    DOMAIN,
+    GARDEN_TYPES,
+    LAWN_CACHE_MAX_AGE_DAYS,
+    LAWN_SOIL_TEMP_MAX_F,
+    LAWN_SOIL_TEMP_MIN_F,
+    MAX_GARDEN_FT,
+    PLANTING_STATUSES,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -55,6 +64,7 @@ def async_setup_views(hass: HomeAssistant) -> None:
     hass.http.register_view(LoamCalendarView)
     hass.http.register_view(LoamPhenologyView)
     hass.http.register_view(LoamSettingsView)
+    hass.http.register_view(LoamLawnView)
 
 
 # ---------------------------------------------------------------------------
@@ -712,3 +722,115 @@ class LoamSettingsView(HomeAssistantView):
         if frost_date:
             await hass.async_add_executor_job(db.set_setting, "frost_date", frost_date)
         return _json({"frost_date": frost_date, "frost_from_config": False})
+
+
+# ---------------------------------------------------------------------------
+# GET /api/loam/lawn
+#   Grass-seed timing: historical spring/fall soil-temp windows for the home
+#   location (cached, recomputed when stale) combined with a live verdict
+#   from current/forecast conditions. Degrades to {"available": false} if
+#   Open-Meteo can't be reached — never breaks the Calendar tab.
+# ---------------------------------------------------------------------------
+
+def _window_status(today: date, start_md: str, end_md: str) -> dict:
+    """Compare today against a recurring MM-DD..MM-DD window (same year)."""
+    start_m, start_d = (int(p) for p in start_md.split("-"))
+    end_m, end_d = (int(p) for p in end_md.split("-"))
+    start_date = date(today.year, start_m, start_d)
+    end_date = date(today.year, end_m, end_d)
+
+    if start_date <= today <= end_date:
+        return {"status": "in_window", "days_until": 0}
+    if today < start_date:
+        return {"status": "upcoming", "days_until": (start_date - today).days}
+    next_start = date(today.year + 1, start_m, start_d)
+    return {"status": "passed", "days_until": (next_start - today).days}
+
+
+def _lawn_verdict(windows: dict, live: dict | None) -> dict:
+    today = date.today()
+    spring = {"season": "spring", **_window_status(today, windows["spring_start"], windows["spring_end"])}
+    fall = {"season": "fall", **_window_status(today, windows["fall_start"], windows["fall_end"])}
+
+    active = next((w for w in (spring, fall) if w["status"] == "in_window"), None)
+    if active is None:
+        active = min((spring, fall), key=lambda w: w["days_until"])
+
+    result = {
+        "available": True,
+        "spring_start": windows["spring_start"], "spring_end": windows["spring_end"],
+        "fall_start": windows["fall_start"], "fall_end": windows["fall_end"],
+        "active_season": active["season"],
+        "status": active["status"],
+        "days_until": active["days_until"],
+    }
+
+    window_start = windows["spring_start"] if active["season"] == "spring" else windows["fall_start"]
+
+    if live is None:
+        result["message"] = (
+            "Good time to plant now."
+            if active["status"] == "in_window"
+            else f"{active['days_until']} days until the {active['season']} window opens (~{window_start})."
+        )
+        return result
+
+    soil_f = live["soil_temp_f"]
+    result["soil_temp_f"] = round(soil_f, 1)
+    result["precip_next_7d_in"] = round(live["precip_next_7d_in"], 2)
+    in_band = LAWN_SOIL_TEMP_MIN_F <= soil_f <= LAWN_SOIL_TEMP_MAX_F
+
+    if active["status"] == "in_window":
+        if in_band:
+            msg = f"Good time to plant now — soil temp {soil_f:.0f}°F, in the ideal {LAWN_SOIL_TEMP_MIN_F}–{LAWN_SOIL_TEMP_MAX_F}°F range."
+        elif soil_f > LAWN_SOIL_TEMP_MAX_F:
+            msg = f"Historically a good window, but soil is running warm right now ({soil_f:.0f}°F, above the {LAWN_SOIL_TEMP_MAX_F}°F ideal max)."
+        else:
+            msg = f"Historically a good window, but soil is running cool right now ({soil_f:.0f}°F, below the {LAWN_SOIL_TEMP_MIN_F}°F ideal min)."
+        if live["precip_next_7d_in"] < 0.25:
+            msg += " Forecast is dry over the next week — plan to water if you seed now."
+    else:
+        msg = f"{active['days_until']} days until the {active['season']} window opens (~{window_start})."
+        if in_band:
+            msg += f" Soil is already {soil_f:.0f}°F, within range — conditions may be running ahead of the historical average this year."
+
+    result["message"] = msg
+    return result
+
+
+class LoamLawnView(HomeAssistantView):
+    url = "/api/loam/lawn"
+    name = "api:loam:lawn"
+    requires_auth = True
+
+    async def get(self, request: web.Request) -> web.Response:
+        hass = request.app["hass"]
+        db = _db(request)
+        lat, lon = hass.config.latitude, hass.config.longitude
+
+        from .api import fetch_live_soil_conditions, fetch_soil_temp_normals
+
+        windows = await hass.async_add_executor_job(db.get_lawn_windows)
+        stale = (
+            windows is None
+            or datetime.now(timezone.utc) - datetime.fromisoformat(windows["computed_at"])
+            > timedelta(days=LAWN_CACHE_MAX_AGE_DAYS)
+        )
+        if stale:
+            try:
+                windows = await hass.async_add_executor_job(fetch_soil_temp_normals, lat, lon)
+            except Exception as err:
+                if windows is None:
+                    _LOGGER.warning("Loam: lawn historical fetch failed: %s", err)
+                    return _json({"available": False})
+                # Keep serving the stale cache rather than fail outright.
+            else:
+                await hass.async_add_executor_job(db.save_lawn_windows, windows)
+
+        try:
+            live = await hass.async_add_executor_job(fetch_live_soil_conditions, lat, lon)
+        except Exception as err:
+            _LOGGER.warning("Loam: lawn live-conditions fetch failed: %s", err)
+            live = None
+
+        return _json(_lawn_verdict(windows, live))
