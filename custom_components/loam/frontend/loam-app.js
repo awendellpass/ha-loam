@@ -981,6 +981,8 @@
           <div class="cal-months-header">${monthsHtml}</div>
         </div>`;
 
+    html += fireflyRowHtml(grid, todayLine);
+
     if (!hasAny) {
       html += '<div class="cal-empty-state">No plants yet — add some in Plants &amp; Plantings to see the calendar.</div>';
     } else {
@@ -1077,6 +1079,28 @@
     return `${MONTH_NAMES[mm - 1]} ${dd}`;
   }
 
+  // Static estimate, not weather-driven — typical dusk mating-flash window for
+  // the Twin Cities. Adjust these two dates if your yard runs earlier/later.
+  const FIREFLY_SEASON = { start: "06-15", end: "08-05" };
+
+  function fireflyRowHtml(grid, todayLine) {
+    const l = mdToPct(FIREFLY_SEASON.start);
+    const r = mdToPct(FIREFLY_SEASON.end);
+    const bar = r > l
+      ? `<div class="cal-bar firefly" style="left:${l.toFixed(1)}%;width:${(r - l).toFixed(1)}%"></div>`
+      : "";
+    return `
+      <div class="cal-section-header">
+        <div class="cal-section-label">Firefly Season</div>
+        <div class="cal-section-line"></div>
+      </div>
+      <div class="cal-row" title="Typical dusk-to-dark mating-flash activity — a rough seasonal estimate, not live data">
+        <div class="cal-plant-name"><span class="cal-plant-name-text">Fireflies</span></div>
+        <div class="cal-bars-area">${grid}${todayLine}${bar}</div>
+      </div>
+      <div class="cal-caption">${mdToLabel(FIREFLY_SEASON.start)}–${mdToLabel(FIREFLY_SEASON.end)}</div>`;
+  }
+
   function lawnRowHtml(lawn) {
     const grid = monthGridHtml();
     const tPct = todayPct();
@@ -1100,7 +1124,7 @@
         <div class="cal-plant-name"><span class="cal-plant-name-text">Grass seed</span></div>
         <div class="cal-bars-area">${grid}${todayLine}${bars}</div>
       </div>
-      <div class="cal-lawn-caption">${caption}</div>`;
+      <div class="cal-caption">${caption}</div>`;
   }
 
   async function loadLawn() {
