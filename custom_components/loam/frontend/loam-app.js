@@ -1087,7 +1087,7 @@
     const l = mdToPct(FIREFLY_SEASON.start);
     const r = mdToPct(FIREFLY_SEASON.end);
     const bar = r > l
-      ? `<div class="cal-bar firefly" style="left:${l.toFixed(1)}%;width:${(r - l).toFixed(1)}%"></div>`
+      ? `<div class="cal-bar plant" style="left:${l.toFixed(1)}%;width:${(r - l).toFixed(1)}%"></div>`
       : "";
     return `
       <div class="cal-section-header">
