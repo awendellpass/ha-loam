@@ -1057,7 +1057,7 @@
       document.getElementById("cal-body").innerHTML =
         `<div class="cal-empty-state">Error loading calendar: ${escapeHtml(e.message)}</div>`;
     }
-    loadLawn();
+    loadDynamicRows();
   }
 
   function mdToPct(md) {
@@ -1127,16 +1127,42 @@
       <div class="cal-caption">${caption}</div>`;
   }
 
-  async function loadLawn() {
+  function herbicideRowHtml(h) {
+    const grid = monthGridHtml();
+    const tPct = todayPct();
+    const todayLine = tPct != null ? `<div class="cal-today-line" style="left:${tPct.toFixed(2)}%"></div>` : "";
+
+    const bars = h.available
+      ? lawnBarHtml(h.spring_start, h.spring_end) + lawnBarHtml(h.fall_start, h.fall_end)
+      : '<div class="cal-bar pending"></div>';
+    const tip = h.available ? h.message : "Spray timing unavailable — couldn't reach Open-Meteo.";
+    const caption = h.available
+      ? `Spring: ${mdToLabel(h.spring_start)}–${mdToLabel(h.spring_end)}` +
+        ` &nbsp;·&nbsp; Fall: ${mdToLabel(h.fall_start)}–${mdToLabel(h.fall_end)} (primary)`
+      : "Couldn't reach Open-Meteo for spray conditions.";
+
+    return `
+      <div class="cal-section-header">
+        <div class="cal-section-label">Herbicide</div>
+        <div class="cal-section-line"></div>
+      </div>
+      <div class="cal-row" title="${escapeHtml(tip)}">
+        <div class="cal-plant-name"><span class="cal-plant-name-text">Creeping Charlie (triclopyr)</span></div>
+        <div class="cal-bars-area">${grid}${todayLine}${bars}</div>
+      </div>
+      <div class="cal-caption">${caption}</div>`;
+  }
+
+  async function loadDynamicRows() {
     const monthRow = document.querySelector("#cal-body .cal-month-row");
     if (!monthRow) return; // no frost date set yet — calendar body isn't built
-    let lawn;
-    try {
-      lawn = await get("/lawn");
-    } catch (e) {
-      lawn = { available: false };
-    }
-    monthRow.insertAdjacentHTML("afterend", lawnRowHtml(lawn));
+    // Fetch in parallel but insert as a single block so the two async rows
+    // land in a fixed order regardless of which network call resolves first.
+    const [herbicide, lawn] = await Promise.all([
+      get("/herbicide").catch(() => ({ available: false })),
+      get("/lawn").catch(() => ({ available: false })),
+    ]);
+    monthRow.insertAdjacentHTML("afterend", herbicideRowHtml(herbicide) + lawnRowHtml(lawn));
   }
 
   // Frost date edit controls.

@@ -410,3 +410,50 @@ def fetch_live_soil_conditions(lat: float, lon: float) -> dict:
         "soil_temp_f": sum(today_temps) / len(today_temps),
         "precip_next_7d_in": precip,
     }
+
+
+def fetch_spray_conditions(lat: float, lon: float) -> dict:
+    """Fetch current air temperature and the next 48 hours' rain outlook.
+
+    Returns {"air_temp_f": float, "rain_next_48h_in": float}. Raises on
+    network/parsing errors so the caller can degrade gracefully.
+    """
+    resp = requests.get(
+        OPEN_METEO_FORECAST_URL,
+        params={
+            "latitude": lat,
+            "longitude": lon,
+            "hourly": "temperature_2m",
+            "daily": "precipitation_sum",
+            "forecast_days": 3,
+            "temperature_unit": "fahrenheit",
+            "precipitation_unit": "inch",
+            "timezone": "auto",
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    body = resp.json()
+
+    now_hour = datetime.now().strftime("%Y-%m-%dT%H:00")
+    hourly = body["hourly"]
+    current_temp = next(
+        (t for ts, t in zip(hourly["time"], hourly["temperature_2m"])
+         if ts >= now_hour and t is not None),
+        None,
+    )
+    if current_temp is None:
+        raise ValueError("No current temperature reading available from Open-Meteo")
+
+    today = date.today().isoformat()
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    daily = body["daily"]
+    rain_next_48h = sum(
+        p for d, p in zip(daily["time"], daily["precipitation_sum"])
+        if d in (today, tomorrow) and p is not None
+    )
+
+    return {
+        "air_temp_f": current_temp,
+        "rain_next_48h_in": rain_next_48h,
+    }

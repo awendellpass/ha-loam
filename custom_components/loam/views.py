@@ -14,6 +14,11 @@ from homeassistant.core import HomeAssistant
 from .const import (
     DOMAIN,
     GARDEN_TYPES,
+    HERBICIDE_DRY_THRESHOLD_IN,
+    HERBICIDE_FALL_WINDOW,
+    HERBICIDE_SPRING_WINDOW,
+    HERBICIDE_TEMP_MAX_F,
+    HERBICIDE_TEMP_MIN_F,
     LAWN_ALGO_VERSION,
     LAWN_CACHE_MAX_AGE_DAYS,
     LAWN_SOIL_TEMP_MAX_F,
@@ -66,6 +71,7 @@ def async_setup_views(hass: HomeAssistant) -> None:
     hass.http.register_view(LoamPhenologyView)
     hass.http.register_view(LoamSettingsView)
     hass.http.register_view(LoamLawnView)
+    hass.http.register_view(LoamHerbicideView)
 
 
 # ---------------------------------------------------------------------------
@@ -836,3 +842,86 @@ class LoamLawnView(HomeAssistantView):
             live = None
 
         return _json(_lawn_verdict(windows, live))
+
+
+# ---------------------------------------------------------------------------
+# GET /api/loam/herbicide
+#   Triclopyr spray timing for creeping charlie: static fall (primary) and
+#   spring (secondary) seasonal windows combined with a live verdict from
+#   current air temp + forecast rain. Degrades to {"available": false} if
+#   Open-Meteo can't be reached — never breaks the Calendar tab.
+# ---------------------------------------------------------------------------
+
+def _herbicide_verdict(live: dict | None) -> dict:
+    today = date.today()
+    fall = {"season": "fall", **_window_status(today, *HERBICIDE_FALL_WINDOW)}
+    spring = {"season": "spring", **_window_status(today, *HERBICIDE_SPRING_WINDOW)}
+
+    active = next((w for w in (fall, spring) if w["status"] == "in_window"), None)
+    if active is None:
+        active = min((fall, spring), key=lambda w: w["days_until"])
+
+    result = {
+        "available": True,
+        "fall_start": HERBICIDE_FALL_WINDOW[0], "fall_end": HERBICIDE_FALL_WINDOW[1],
+        "spring_start": HERBICIDE_SPRING_WINDOW[0], "spring_end": HERBICIDE_SPRING_WINDOW[1],
+        "active_season": active["season"],
+        "status": active["status"],
+        "days_until": active["days_until"],
+    }
+
+    window_start = (
+        HERBICIDE_FALL_WINDOW[0] if active["season"] == "fall" else HERBICIDE_SPRING_WINDOW[0]
+    )
+
+    if live is None:
+        result["message"] = (
+            "In the window now — fall is the most effective time to spray triclopyr on creeping charlie."
+            if active["status"] == "in_window"
+            else f"{active['days_until']} days until the {active['season']} window opens (~{window_start})."
+        )
+        return result
+
+    temp_f = live["air_temp_f"]
+    rain_in = live["rain_next_48h_in"]
+    result["air_temp_f"] = round(temp_f, 1)
+    result["rain_next_48h_in"] = round(rain_in, 2)
+    in_band = HERBICIDE_TEMP_MIN_F <= temp_f <= HERBICIDE_TEMP_MAX_F
+    dry = rain_in < HERBICIDE_DRY_THRESHOLD_IN
+
+    if active["status"] == "in_window":
+        if in_band and dry:
+            msg = f"Good day to spray — {temp_f:.0f}°F and dry for the next 48 hours."
+        elif not dry:
+            msg = (
+                f"Hold off — rain expected in the next 48 hours ({rain_in:.2f}\" forecast). "
+                "Triclopyr needs a dry window to absorb before it washes off."
+            )
+        elif temp_f > HERBICIDE_TEMP_MAX_F:
+            msg = f"In the window, but it's hot right now ({temp_f:.0f}°F) — consider waiting for a cooler day to reduce drift/volatilization risk."
+        else:
+            msg = f"In the window, but it's cool right now ({temp_f:.0f}°F) — uptake slows below {HERBICIDE_TEMP_MIN_F}°F."
+    else:
+        msg = f"{active['days_until']} days until the {active['season']} window opens (~{window_start})."
+
+    result["message"] = msg
+    return result
+
+
+class LoamHerbicideView(HomeAssistantView):
+    url = "/api/loam/herbicide"
+    name = "api:loam:herbicide"
+    requires_auth = True
+
+    async def get(self, request: web.Request) -> web.Response:
+        hass = request.app["hass"]
+        lat, lon = hass.config.latitude, hass.config.longitude
+
+        from .api import fetch_spray_conditions
+        try:
+            live = await hass.async_add_executor_job(fetch_spray_conditions, lat, lon)
+        except Exception as err:
+            _LOGGER.warning("Loam: herbicide live-conditions fetch failed: %s", err)
+            live = None
+
+        return _json(_herbicide_verdict(live))

@@ -60,3 +60,24 @@ LAWN_CACHE_MAX_AGE_DAYS = 180
 # Bump whenever the window-detection algorithm changes so cached windows from
 # an older version are treated as stale and recomputed automatically.
 LAWN_ALGO_VERSION = 3
+
+# Triclopyr timing for creeping charlie (Glechoma hederacea). Two seasonal
+# windows per standard extension guidance: fall is primary (the plant is
+# translocating sugars to its roots for winter, pulling the systemic
+# herbicide down with them); spring is secondary and must land before bloom,
+# after which uptake drops off. Static MM-DD ranges, not computed from
+# historical data like the Lawn windows — creeping charlie's fall trigger is
+# root translocation, not a soil-temperature crossing.
+HERBICIDE_FALL_WINDOW = ("09-01", "10-15")
+HERBICIDE_SPRING_WINDOW = ("04-15", "05-31")
+
+# Ideal air-temperature band (°F) for triclopyr application. Below this,
+# plant growth/uptake is too slow for good translocation; above it, product
+# labels generally caution against spraying due to volatilization/drift risk.
+HERBICIDE_TEMP_MIN_F = 45
+HERBICIDE_TEMP_MAX_F = 85
+
+# Minimum forecast rain-free window (inches, next 48h) treated as "dry
+# enough to spray" — triclopyr needs to stay on the leaf surface to absorb
+# before rain can wash it off.
+HERBICIDE_DRY_THRESHOLD_IN = 0.1
