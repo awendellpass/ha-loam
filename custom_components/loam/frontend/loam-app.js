@@ -982,6 +982,7 @@
         </div>`;
 
     html += fireflyRowHtml(grid, todayLine);
+    html += grantsRowHtml(grid, todayLine);
 
     if (!hasAny) {
       html += '<div class="cal-empty-state">No plants yet — add some in Plants &amp; Plantings to see the calendar.</div>';
@@ -1099,6 +1100,53 @@
         <div class="cal-bars-area">${grid}${todayLine}${bar}</div>
       </div>
       <div class="cal-caption">${mdToLabel(FIREFLY_SEASON.start)}–${mdToLabel(FIREFLY_SEASON.end)}</div>`;
+  }
+
+  // Static, not live-fetched — grant windows are published dates, not weather.
+  // Update these every year; sources: dakotaswcd.org (651-480-7777) and
+  // bluethumb.org/lawns-to-legumes.
+  const GRANT_WINDOWS = {
+    lcw: {
+      label: "Dakota Co. — Landscaping for Clean Water",
+      start: "02-20",
+      end: "06-18",
+      color: "#2f9e8f",
+      tip: "Intro class opens Feb 20; Design Course registration closes Jun 18. " +
+           "$250 grant applications open Apr 30 — dakotaswcd.org, 651-480-7777.",
+      caption: "Feb 20 – Jun 18 &nbsp;·&nbsp; classes &amp; design course &nbsp;·&nbsp; $250 grant opens Apr 30",
+    },
+    l2l: {
+      label: "MN — Lawns to Legumes",
+      color: "#c99a2e",
+      tip: "Statewide pollinator-habitat grant, up to $400 reimbursed. Spring 2026 window has closed; " +
+           "next window not yet announced — check bluethumb.org/lawns-to-legumes.",
+      caption: "Spring 2026 window closed &nbsp;·&nbsp; next window TBD — check bluethumb.org",
+    },
+  };
+
+  function grantsRowHtml(grid, todayLine) {
+    const lcw = GRANT_WINDOWS.lcw;
+    const l2l = GRANT_WINDOWS.l2l;
+    const lcwL = mdToPct(lcw.start);
+    const lcwR = mdToPct(lcw.end);
+    const lcwBar = lcwR > lcwL
+      ? `<div class="cal-bar" style="left:${lcwL.toFixed(1)}%;width:${(lcwR - lcwL).toFixed(1)}%;background:${lcw.color}"></div>`
+      : "";
+    return `
+      <div class="cal-section-header">
+        <div class="cal-section-label">Grants</div>
+        <div class="cal-section-line"></div>
+      </div>
+      <div class="cal-row" title="${escapeHtml(lcw.tip)}">
+        <div class="cal-plant-name"><span class="cal-plant-name-text">${lcw.label}</span></div>
+        <div class="cal-bars-area">${grid}${todayLine}${lcwBar}</div>
+      </div>
+      <div class="cal-caption">${lcw.caption}</div>
+      <div class="cal-row" title="${escapeHtml(l2l.tip)}">
+        <div class="cal-plant-name"><span class="cal-plant-name-text">${l2l.label}</span></div>
+        <div class="cal-bars-area">${grid}${todayLine}</div>
+      </div>
+      <div class="cal-caption">${l2l.caption}</div>`;
   }
 
   function lawnRowHtml(lawn) {
