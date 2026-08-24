@@ -8,6 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 
 from .const import (
+    CONF_FIRST_FROST_DATE,
     CONF_FROST_DATE,
     CONF_OLLAMA_HOST,
     CONF_PERMAPEOPLE_KEY_ID,
@@ -29,6 +30,7 @@ CONFIG_SCHEMA = vol.Schema(
                 vol.Optional(CONF_PERMAPEOPLE_KEY_SECRET): cv.string,
                 vol.Optional(CONF_OLLAMA_HOST): cv.string,
                 vol.Optional(CONF_FROST_DATE): cv.string,
+                vol.Optional(CONF_FIRST_FROST_DATE): cv.string,
             }
         )
     },
@@ -51,8 +53,9 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         "permapeople_key_id": conf.get(CONF_PERMAPEOPLE_KEY_ID, ""),
         "permapeople_key_secret": conf.get(CONF_PERMAPEOPLE_KEY_SECRET, ""),
         "ollama_host": conf.get(CONF_OLLAMA_HOST, ""),
-        # frost_date from config.yaml overrides the value stored in the DB.
+        # frost dates from config.yaml override the values stored in the DB.
         "frost_date_override": conf.get(CONF_FROST_DATE, ""),
+        "first_frost_date_override": conf.get(CONF_FIRST_FROST_DATE, ""),
     }
 
     frontend_dir = os.path.join(os.path.dirname(__file__), "frontend")

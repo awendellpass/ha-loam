@@ -34,6 +34,25 @@ def _db(request: web.Request):
     return request.app["hass"].data[DOMAIN]["db"]
 
 
+def _valid_md(value: str) -> bool:
+    parts = value.split("-")
+    return (
+        len(parts) == 2
+        and all(p.isdigit() for p in parts)
+        and 1 <= int(parts[0]) <= 12
+        and 1 <= int(parts[1]) <= 31
+    )
+
+
+async def _resolved_frost(hass, db, override_key: str, db_key: str) -> tuple[str, bool]:
+    """Resolve a frost date: configuration.yaml override wins, else the DB setting."""
+    override = hass.data[DOMAIN].get(override_key, "")
+    if override:
+        return override, True
+    value = await hass.async_add_executor_job(db.get_setting, db_key) or ""
+    return value, False
+
+
 def _json(data: Any, status: int = 200) -> web.Response:
     return web.Response(
         body=json.dumps(data),
@@ -584,12 +603,12 @@ class LoamCalendarView(HomeAssistantView):
         hass = request.app["hass"]
         db = _db(request)
 
-        # Frost date: config.yaml override wins; fall back to DB setting.
-        frost_override = hass.data[DOMAIN].get("frost_date_override", "")
-        if frost_override:
-            frost_date = frost_override
-        else:
-            frost_date = await hass.async_add_executor_job(db.get_setting, "frost_date") or ""
+        frost_date, frost_from_config = await _resolved_frost(
+            hass, db, "frost_date_override", "frost_date"
+        )
+        first_frost_date, first_frost_from_config = await _resolved_frost(
+            hass, db, "first_frost_date_override", "first_frost_date"
+        )
 
         groups = await hass.async_add_executor_job(db.get_calendar_plants)
         all_plants = groups["garden"] + groups["wishlist"] + groups["library"]
@@ -604,7 +623,9 @@ class LoamCalendarView(HomeAssistantView):
 
         return _json({
             "frost_date": frost_date,
-            "frost_from_config": bool(frost_override),
+            "frost_from_config": frost_from_config,
+            "first_frost_date": first_frost_date,
+            "first_frost_from_config": first_frost_from_config,
             "sections": [
                 {"label": "In My Garden", "key": "garden",
                  "plants": attach_phenology(groups["garden"])},
@@ -699,11 +720,18 @@ class LoamSettingsView(HomeAssistantView):
     async def get(self, request: web.Request) -> web.Response:
         hass = request.app["hass"]
         db = _db(request)
-        frost_override = hass.data[DOMAIN].get("frost_date_override", "")
-        frost_date = frost_override or await hass.async_add_executor_job(
-            db.get_setting, "frost_date"
-        ) or ""
-        return _json({"frost_date": frost_date, "frost_from_config": bool(frost_override)})
+        frost_date, frost_from_config = await _resolved_frost(
+            hass, db, "frost_date_override", "frost_date"
+        )
+        first_frost_date, first_frost_from_config = await _resolved_frost(
+            hass, db, "first_frost_date_override", "first_frost_date"
+        )
+        return _json({
+            "frost_date": frost_date,
+            "frost_from_config": frost_from_config,
+            "first_frost_date": first_frost_date,
+            "first_frost_from_config": first_frost_from_config,
+        })
 
     async def put(self, request: web.Request) -> web.Response:
         try:
@@ -712,23 +740,25 @@ class LoamSettingsView(HomeAssistantView):
             return _error("Invalid JSON")
 
         frost_date = (body.get("frost_date") or "").strip()
-        if frost_date:
-            # Validate MM-DD format
-            parts = frost_date.split("-")
-            valid = (
-                len(parts) == 2
-                and all(p.isdigit() for p in parts)
-                and 1 <= int(parts[0]) <= 12
-                and 1 <= int(parts[1]) <= 31
-            )
-            if not valid:
-                return _error("frost_date must be MM-DD (e.g. 05-07)")
+        if frost_date and not _valid_md(frost_date):
+            return _error("frost_date must be MM-DD (e.g. 05-07)")
+
+        first_frost_date = (body.get("first_frost_date") or "").strip()
+        if first_frost_date and not _valid_md(first_frost_date):
+            return _error("first_frost_date must be MM-DD (e.g. 10-01)")
 
         hass = request.app["hass"]
         db = _db(request)
         if frost_date:
             await hass.async_add_executor_job(db.set_setting, "frost_date", frost_date)
-        return _json({"frost_date": frost_date, "frost_from_config": False})
+        if first_frost_date:
+            await hass.async_add_executor_job(db.set_setting, "first_frost_date", first_frost_date)
+        return _json({
+            "frost_date": frost_date,
+            "frost_from_config": False,
+            "first_frost_date": first_frost_date,
+            "first_frost_from_config": False,
+        })
 
 
 # ---------------------------------------------------------------------------

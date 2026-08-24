@@ -637,8 +637,14 @@
       margin-bottom: 8px;
     }
 
-    .cal-frost-label { font-size: 13px; color: var(--text-muted); }
-    .cal-frost-value { font-size: 13px; font-weight: 600; }
+    .cal-frost-countdown {
+      display: flex;
+      gap: 18px;
+      flex-wrap: wrap;
+      font-size: 13px;
+    }
+    .cal-frost-countdown strong { font-variant-numeric: tabular-nums; }
+    .cal-frost-countdown .cal-frost-chip-date { color: var(--text-muted); font-size: 12px; }
 
     .cal-frost-input {
       width: 90px;
@@ -798,6 +804,15 @@
       width: 2px;
       background: var(--accent);
       opacity: 0.55;
+      pointer-events: none;
+      z-index: 3;
+    }
+
+    .cal-frost-line {
+      position: absolute;
+      top: 0; bottom: 0;
+      width: 2px;
+      opacity: 0.65;
       pointer-events: none;
       z-index: 3;
     }
@@ -983,14 +998,20 @@
   <div id="tab-calendar" class="tab-content">
     <div class="cal-header">
       <div class="cal-frost-row">
-        <span class="cal-frost-label">Last frost:</span>
-        <span class="cal-frost-value" id="cal-frost-display">—</span>
+        <span class="cal-frost-countdown" id="cal-frost-countdown">—</span>
         <button class="btn btn-ghost btn-sm" id="btn-edit-frost">Edit</button>
-        <span id="cal-frost-from-config" style="display:none;font-size:11px;color:var(--text-muted)">(set in configuration.yaml)</span>
       </div>
-      <div id="cal-frost-edit-row" style="display:none;align-items:center;gap:8px;margin-bottom:8px">
-        <label style="font-size:12px;color:var(--text-muted)">MM-DD</label>
-        <input type="text" id="cal-frost-input" class="cal-frost-input" placeholder="05-07" maxlength="5" />
+      <div id="cal-frost-edit-row" style="display:none;align-items:center;gap:16px;margin-bottom:8px;flex-wrap:wrap">
+        <span style="display:flex;align-items:center;gap:6px">
+          <label style="font-size:12px;color:var(--text-muted)">First frost (MM-DD)</label>
+          <input type="text" id="cal-first-frost-input" class="cal-frost-input" placeholder="10-01" maxlength="5" />
+          <span id="cal-first-frost-from-config" style="display:none;font-size:11px;color:var(--text-muted)">(config)</span>
+        </span>
+        <span style="display:flex;align-items:center;gap:6px">
+          <label style="font-size:12px;color:var(--text-muted)">Last frost (MM-DD)</label>
+          <input type="text" id="cal-frost-input" class="cal-frost-input" placeholder="05-07" maxlength="5" />
+          <span id="cal-frost-from-config" style="display:none;font-size:11px;color:var(--text-muted)">(config)</span>
+        </span>
         <button class="btn btn-primary btn-sm" id="btn-save-frost">Save</button>
         <button class="btn btn-ghost btn-sm" id="btn-cancel-frost">Cancel</button>
       </div>
@@ -1000,6 +1021,8 @@
         <span class="legend-item"><span class="legend-swatch" style="background:#f9a825"></span>Harvest</span>
         <span class="legend-item"><span class="legend-swatch" style="background:linear-gradient(90deg,#f06292,#ab47bc,#9c27b0)"></span>Bloom (color = flower)</span>
         <span class="legend-item cal-today-legend"><span style="display:inline-block;width:2px;height:14px;background:var(--accent);border-radius:1px;vertical-align:middle;margin-right:4px"></span>Today</span>
+        <span class="legend-item"><span style="display:inline-block;width:2px;height:14px;background:#ff8a65;border-radius:1px;vertical-align:middle;margin-right:4px"></span>First frost</span>
+        <span class="legend-item"><span style="display:inline-block;width:2px;height:14px;background:#64b5f6;border-radius:1px;vertical-align:middle;margin-right:4px"></span>Last frost</span>
       </div>
     </div>
     <div class="cal-body" id="cal-body">

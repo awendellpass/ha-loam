@@ -922,20 +922,26 @@
 
   function renderCalendar(calData) {
     const body = document.getElementById("cal-body");
-    const { frost_date, frost_from_config, sections } = calData;
+    const { frost_date, frost_from_config, first_frost_date, first_frost_from_config, sections } = calData;
 
-    // Update frost display in header.
-    document.getElementById("cal-frost-display").textContent = frost_date || "—";
-    const fromCfg = document.getElementById("cal-frost-from-config");
-    fromCfg.style.display = frost_from_config ? "inline" : "none";
-    document.getElementById("btn-edit-frost").style.display = frost_from_config ? "none" : "inline-block";
+    // Countdown chips in header (first frost, then last frost).
+    document.getElementById("cal-frost-countdown").innerHTML = frostCountdownHtml(frost_date, first_frost_date);
+    const firstCfg = document.getElementById("cal-first-frost-from-config");
+    firstCfg.style.display = first_frost_from_config ? "inline" : "none";
+    document.getElementById("cal-first-frost-input").disabled = first_frost_from_config;
+    const lastCfg = document.getElementById("cal-frost-from-config");
+    lastCfg.style.display = frost_from_config ? "inline" : "none";
+    document.getElementById("cal-frost-input").disabled = frost_from_config;
+    document.getElementById("btn-edit-frost").style.display =
+      (frost_from_config && first_frost_from_config) ? "none" : "inline-block";
 
     if (!frost_date) {
       body.innerHTML = `
         <div class="cal-no-frost">
           <strong>Set your last frost date to see the calendar.</strong><br/>
           Click <strong>Edit</strong> above and enter your last spring frost date (MM-DD).<br/>
-          For the Twin Cities, that's usually <strong>05-07</strong>.
+          For the Twin Cities, that's usually <strong>05-07</strong>. First frost is optional —
+          it just adds a marker and countdown for fall.
         </div>`;
       return;
     }
@@ -944,9 +950,10 @@
     const fdoy = frostDoy(frost_date, year);
     const tPct  = todayPct();
 
-    const todayLine = tPct != null
-      ? `<div class="cal-today-line" style="left:${tPct.toFixed(2)}%"></div>`
-      : "";
+    const todayLine =
+      (tPct != null ? `<div class="cal-today-line" style="left:${tPct.toFixed(2)}%"></div>` : "") +
+      frostLineHtml(first_frost_date, "#ff8a65") +
+      frostLineHtml(frost_date, "#64b5f6");
     const grid = monthGridHtml();
 
     // Month header row.
@@ -1078,6 +1085,40 @@
   function mdToLabel(md) {
     const [mm, dd] = md.split("-").map(Number);
     return `${MONTH_NAMES[mm - 1]} ${dd}`;
+  }
+
+  // Vertical marker line for a frost date, threaded through every bars-area
+  // alongside the today-line (same pattern, just a different color per date).
+  function frostLineHtml(md, color) {
+    if (!md) return "";
+    const pct = mdToPct(md);
+    return `<div class="cal-frost-line" style="left:${pct.toFixed(2)}%;background:${color}"></div>`;
+  }
+
+  // Weeks from today to the next occurrence of an MM-DD date (rolls to next
+  // year if this year's date has already passed).
+  function weeksUntil(md) {
+    const [mm, dd] = md.split("-").map(Number);
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    let target = new Date(today.getFullYear(), mm - 1, dd);
+    if (target < today) target = new Date(today.getFullYear() + 1, mm - 1, dd);
+    return Math.round((target - today) / (7 * 86400000));
+  }
+
+  function frostChip(md, label, color) {
+    const w = weeksUntil(md);
+    return `<span class="cal-frost-chip-group">` +
+      `<span class="cal-frost-chip" style="color:${color}"><strong>${w}</strong> week${w === 1 ? "" : "s"} to ${label}</span> ` +
+      `<span class="cal-frost-chip-date">(${mdToLabel(md)})</span>` +
+      `</span>`;
+  }
+
+  function frostCountdownHtml(frostDate, firstFrostDate) {
+    const chips = [];
+    if (firstFrostDate) chips.push(frostChip(firstFrostDate, "first frost", "#ff8a65"));
+    if (frostDate) chips.push(frostChip(frostDate, "last frost", "#64b5f6"));
+    return chips.length ? chips.join("") : "Set your frost dates";
   }
 
   // Static estimate, not weather-driven — typical dusk mating-flash window for
@@ -1224,11 +1265,14 @@
   });
 
   document.getElementById("btn-save-frost").addEventListener("click", async () => {
-    const val = document.getElementById("cal-frost-input").value.trim();
-    if (!val) return;
+    const lastVal = document.getElementById("cal-frost-input").value.trim();
+    const firstVal = document.getElementById("cal-first-frost-input").value.trim();
+    if (!lastVal && !firstVal) return;
     try {
-      await put("/settings", { frost_date: val });
+      await put("/settings", { frost_date: lastVal, first_frost_date: firstVal });
       document.getElementById("cal-frost-edit-row").style.display = "none";
+      document.getElementById("cal-frost-input").value = "";
+      document.getElementById("cal-first-frost-input").value = "";
       await loadCalendar();
     } catch (e) {
       alert("Invalid frost date: " + e.message);
@@ -1236,6 +1280,11 @@
   });
 
   document.getElementById("cal-frost-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") document.getElementById("btn-save-frost").click();
+    if (e.key === "Escape") document.getElementById("btn-cancel-frost").click();
+  });
+
+  document.getElementById("cal-first-frost-input").addEventListener("keydown", e => {
     if (e.key === "Enter") document.getElementById("btn-save-frost").click();
     if (e.key === "Escape") document.getElementById("btn-cancel-frost").click();
   });
